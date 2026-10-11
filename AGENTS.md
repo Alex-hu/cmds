@@ -20,13 +20,18 @@
 | 交叉编译 | `v -prod -os linux .`（可换 windows/macos） |
 | 添加依赖 | `v install <模块>`（写入 v.mod；克隆后 `v sync` 还原） |
 
-## 目录结构（约定）
+## 目录结构（当前实际）
 
 ```
-v.mod          # Module { name: 'cmds' ... }
-main.v         # 薄入口：解析参数 → 分发子命令
-cmd/           # 各子命令实现，一个子命令一个文件
-internal/      # 内部模块（无 V 级强制，靠约定不对外）
+v.mod               # Module { name: 'cmds' ... }
+main.v              # 薄入口：全局 flag → 分发子命令（fp.allow_unknown_args() 放行子命令 flag）
+cmd/                # 子命令：mod.v 分发、update.v 索引管道、list.v、version.v
+internal/model/     # Entry/Occurrence/MergedEntry + 去重/过滤/模糊打分纯函数
+internal/scan/      # parse_path/scan_dir/scan_dirs 通用扫描（并行、保序）
+internal/source/    # protocol.v 接口 + registry.v + simple/heavy_sources.v 九个实现
+internal/store/     # SQLite 索引（open/save_all/load_all/query/meta_get/close）
+docs/SPIKE.md       # 各源元数据格式实测记录（改 enrich 前必读）
+mockups/            # 交互原型（A2 定稿）
 ```
 
 模块规则（已在本机 V 0.5.2 实测）：
@@ -97,8 +102,10 @@ fn main() {
 ## 已知坑
 
 - `v test .` 只编译**含有测试文件**的模块——无测试模块的编译错误要到 `v build .` 才暴露；提交前两者都要跑。
-- **SQLite（stdlib `db.sqlite`）**：`connect(path)!` 的结果必须声明为 `mut` 才能调用 `close()`（close 是 mut 方法）；写入用 `exec_param_many`（参数化防注入/转义问题），查询用 `exec`/`q_int`/`q_string`，均已实测。
-- **V `interface` 动态分发可用**（Source 插件协议的基础）：`[]Source` 异构集合、`?string` Option 返回的方法签名均实测通过；注意向 interface 数组 push 需 `mut` 声明。
+- **SQLite（stdlib `db.sqlite`）**：`connect(path)!` 的结果必须声明为 `mut` 才能调用 `close()`（close 是 mut 方法）；写入用 `exec_param_many`（参数化防注入/转义问题），查询用 `exec`/`q_int`/`q_string`，均已实测。`exec` 一次只执行**第一条**语句（多条 DDL 静默丢弃其余）；`get_int` 是 32 位截断，大整数用 `get_string(col).u64()`。
+- **V `interface` 动态分发可用**（Source 插件协议的基础）：`[]Source` 异构集合、`?string` Option 返回、`mut []T` 参数的方法签名均实测通过；注意向 interface 数组 push 需 `mut` 声明。
+- **os API 实际形态（多处与直觉不符，均已实测）**：`os.execute` 已废弃（告警）→ 用 `os.exec(['cmd','args'])`，返回普通结构体**只有** `exit_code`/`output`（无 stderr，命令不存在时 exit_code=-1）；`os.real_path(p) string`（不是 `realpath`，不失败原样返回）；目录列举是 `os.ls(p) ![]string`（无 `read_dir`）；`os.mkdir_all(p)` 尾参 MkdirParams 可整体省略；`os.stat` 的 `mode` 是 u32（`(mode & 0o170000)==0o100000` 判普通文件、`mode & 0o111` 判执行位）；`os.getenv` 返回普通 string（不能 `if v := os.getenv(...)`）；`os.File.close()` 是 mut 方法；rune 的 `.str()` 返回**十进制数字串**（取字符用 `.ascii_str()`）；`time.unix(t)` 单参数 + `custom_format()`。
+- **flag 子命令模式**：全局解析器必须 `fp.allow_unknown_args()`，否则子命令自己的 `--source` 会在主解析器 finalize 时报 unknown flag。
 - **`json` 模块已被移除**（V 0.5.x）：必须用 `json2`，API 为 `json2.decode[T](s)` 与 `json2.encode(x, ...)`，已实测可用。
 - `vlib/cli`（Commander 式子命令框架）的自动 `--help` 实测报错（README 与实现不符）；子命令框架用 `flag` + 手写分发即可。
 - `vlib/term/ui`（termui）组件残缺，TUI 用 `term` 模块手写 ANSI；raw-mode API 用前先做 spike 验证。

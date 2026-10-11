@@ -12,6 +12,7 @@ fn main() {
 	fp.version(version)
 	fp.description('示例命令行工具骨架。')
 	fp.skip_executable()
+	fp.allow_unknown_args()
 	verbose := fp.bool('verbose', `v`, false, 'enable verbose output')
 	args := fp.finalize() or {
 		eprintln(fp.usage())
@@ -20,7 +21,6 @@ fn main() {
 	}
 	ctx := cmd.Context{
 		verbose: verbose
-		version: version
 	}
 	cmd.run(ctx, args) or {
 		eprintln('cmds: ${err}')

@@ -2,10 +2,10 @@ module cmd
 
 import strings
 
+// Context 携带全局选项，由 main 构造后传给各子命令。
 pub struct Context {
 pub:
 	verbose bool
-	version string
 }
 
 pub struct Command {
@@ -18,7 +18,8 @@ pub:
 // commands 返回全部已注册的子命令。
 pub fn commands() []Command {
 	return [
-		Command{ name: 'hello', usage: 'hello [name]', description: '向 name 问好（默认 world）。' },
+		Command{ name: 'update', usage: 'update [--deep]', description: '重建索引（deep 探测 M4 提供）' },
+		Command{ name: 'list', usage: 'list [--source S] [--scope E]', description: '列出已索引命令（默认读缓存）' },
 		Command{ name: 'version', usage: 'version', description: '打印版本信息。' },
 		Command{ name: 'help', usage: 'help', description: '显示帮助。' },
 	]
@@ -26,12 +27,13 @@ pub fn commands() []Command {
 
 // usage 生成顶层帮助文本。
 pub fn usage() string {
-	mut sb := strings.new_builder(128)
+	mut sb := strings.new_builder(256)
 	sb.writeln('Usage: cmds [options] <command> [args]')
 	sb.writeln('\nCommands:')
 	for c in commands() {
-		sb.writeln('  ${pad(c.usage, 16)}${c.description}')
+		sb.writeln('  ${pad(c.usage, 28)}${c.description}')
 	}
+	sb.writeln('\n先运行 cmds update 建立索引。')
 	return sb.str()
 }
 
@@ -50,7 +52,8 @@ pub fn run(ctx Context, args []string) ! {
 		exit(2)
 	}
 	match args[0] {
-		'hello' { hello_cmd(ctx, args[1..])! }
+		'update' { update_cmd(ctx, args[1..])! }
+		'list' { list_cmd(ctx, args[1..])! }
 		'version' { version_cmd(ctx)! }
 		'help' { println(usage()) }
 		else {
