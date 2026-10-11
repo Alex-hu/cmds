@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>cmds 交互原型 A2 · Tab 浏览器（二级分类）</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#11151a; --border:#1f2630; --text:#cdd6e0; --dim:#6b7684;
+    --sel:#1a2332; --accent:#58a6d9;
+    --c-system:#8b98a5; --c-brew:#d9a441; --c-npm:#58b368; --c-conda:#3fb8af;
+    --c-cargo:#d97f41; --c-go:#58a6d9; --c-rvm:#d95763; --c-app:#a78bfa; --c-manual:#6b7684;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  .banner{padding:10px 16px;background:#16103a;border-bottom:1px solid var(--border);
+    color:#c9b8ff;font-size:12px}
+  #app{display:flex;flex-direction:column;height:calc(100vh - 38px);min-height:480px}
+  #tabs{display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .tab{padding:5px 12px;border:1px solid var(--border);border-bottom:none;border-radius:6px 6px 0 0;
+    cursor:pointer;color:var(--dim);background:transparent;user-select:none}
+  .tab.on{color:var(--text);background:var(--panel);border-color:#2c3947}
+  .tab .n{opacity:.6;font-size:11px;margin-left:4px}
+  #subtabs{display:flex;gap:6px;align-items:center;padding:7px 12px;background:var(--panel);
+    border-bottom:1px solid var(--border);flex-wrap:wrap}
+  #subtabs .lbl{color:var(--dim);font-size:12px;margin-right:2px}
+  .sub{padding:2px 12px;border-radius:12px;border:1px solid var(--border);cursor:pointer;
+    font-size:12px;color:var(--dim);user-select:none}
+  .sub.on{color:#0b0d10;font-weight:bold}
+  .sub.k-conda.on{background:var(--c-conda);border-color:var(--c-conda)}
+  .sub.k-npm.on{background:var(--c-npm);border-color:var(--c-npm)}
+  #nosub{padding:7px 14px;background:var(--panel);border-bottom:1px solid var(--border);
+    color:#3d4854;font-size:12px}
+  .filterrow{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border)}
+  .filterrow kbd{color:var(--dim);border:1px solid var(--border);border-radius:4px;padding:0 6px}
+  #filter{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:4px;
+    color:var(--text);padding:4px 8px;font:inherit;outline:none}
+  #filter:focus{border-color:var(--accent)}
+  #tablewrap{flex:1;overflow:auto;padding:0 12px}
+  table{border-collapse:collapse;width:100%}
+  th{position:sticky;top:0;background:var(--bg);text-align:left;color:var(--dim);font-weight:normal;
+    padding:8px 10px 4px;border-bottom:1px solid var(--border);font-size:12px}
+  td{padding:5px 10px;border-bottom:1px solid #151b22;white-space:nowrap}
+  td.desc{white-space:normal;color:#9aa7b4;max-width:420px;overflow:hidden;text-overflow:ellipsis}
+  tr.row{cursor:pointer}
+  tr.row.sel{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
+  .badge{display:inline-block;padding:0 7px;border-radius:8px;font-size:11px;line-height:18px;
+    margin-right:4px;background:#1a212b}
+  .b-system{color:var(--c-system)} .b-brew{color:var(--c-brew)} .b-npm{color:var(--c-npm)}
+  .b-conda{color:var(--c-conda)} .b-cargo{color:var(--c-cargo)} .b-go{color:var(--c-go)}
+  .b-rvm{color:var(--c-rvm)} .b-app{color:var(--c-app)} .b-manual{color:var(--c-manual)}
+  .dim{color:var(--dim)} .x{color:var(--dim);font-size:11px;margin-left:6px}
+  #keybar{display:flex;gap:14px;padding:7px 12px;border-top:1px solid var(--border);
+    color:var(--dim);font-size:12px;background:var(--panel);flex-wrap:wrap}
+  kbd.k{border:1px solid var(--border);border-radius:4px;padding:0 5px;color:#a8b3bf;background:#0e1216}
+  #overlay{position:fixed;inset:0;background:rgba(4,6,8,.72);display:flex;
+    align-items:center;justify-content:center}
+  #overlay.hidden{display:none}
+  .sheet{background:var(--panel);border:1px solid #2c3947;border-radius:10px;max-width:760px;
+    width:92%;max-height:84vh;overflow:auto;padding:18px 22px}
+  .sheet h2{margin:0 0 2px;font-size:18px}
+  .sheet .close{float:right;cursor:pointer;color:var(--dim)}
+  .prov{border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:10px 0}
+  .prov .eff{color:var(--c-npm);font-size:12px}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:3px 12px;font-size:13px;margin-top:6px}
+  .kv b{color:var(--dim);font-weight:normal}
+  .note{color:var(--dim);font-size:12px;margin-top:8px}
+  #toast{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);background:#1c2733;
+    border:1px solid #2c3947;border-radius:6px;padding:6px 14px;font-size:12px;color:#a8b3bf;
+    opacity:0;transition:opacity .25s;pointer-events:none}
+  #toast.show{opacity:1}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="banner">原型 A2（已采纳 A + 二级分类）—— 一级 tab 切<b>来源</b>；来源有子分类时出现二级 tab：Conda → 各环境，Node → 各 node 版本。二级 tab 回答"激活该环境/版本时有哪些命令"（如 jupyter 只在 ml 环境、tsx 只在 nvm/v24.3.0）。键位：<b>Tab</b> 切一级，<b>←/→</b> 切二级。</div>
+<div id="app">
+  <nav id="tabs"></nav>
+  <div id="subtabs" class="hidden"></div>
+  <div id="nosub" class="hidden">该来源无二级分类</div>
+  <div class="filterrow"><kbd>/</kbd><input id="filter" placeholder="过滤名称 / 描述 / 来源…"></div>
+  <div id="tablewrap"><table><thead><tr>
+    <th style="width:220px">NAME</th><th style="width:290px">SOURCE</th>
+    <th style="width:110px">VERSION</th><th style="width:110px">INSTALLED</th><th>DESC</th>
+  </tr></thead><tbody id="rows"></tbody></table></div>
+  <div id="keybar">
+    <span><kbd class="k">Tab</kbd>/<kbd class="k">⇧Tab</kbd> 一级：来源</span>
+    <span><kbd class="k">←</kbd><kbd class="k">→</kbd> 或 <kbd class="k">h</kbd><kbd class="k">l</kbd> 二级：环境/版本</span>
+    <span><kbd class="k">j</kbd>/<kbd class="k">k</kbd> 移动</span>
+    <span><kbd class="k">Enter</kbd> 详情</span>
+    <span><kbd class="k">/</kbd> 过滤</span>
+    <span><kbd class="k">q</kbd> 退出</span>
+    <span class="dim" id="stat"></span>
+  </div>
+</div>
+<div id="overlay" class="hidden"><div class="sheet" id="sheet"></div></div>
+<div id="toast"></div>
+<script>
+const E=[
+e('zsh','system','system','5.9','Z shell，macOS 默认 shell','2025-03-14','/bin/zsh'),
+e('grep','system','system','2.6.0-BSD','正则搜索文本','2025-03-14','/usr/bin/grep'),
+e('ls','system','system','—','列出目录内容','2025-03-14','/bin/ls'),
+e('sed','system','system','—','流编辑器','2025-03-14','/usr/bin/sed'),
+e('git','brew','brew','2.47.1','分布式版本控制系统','2025-09-02','/usr/local/bin/git → …/Cellar/git/2.47.1/bin/git'),
+e('jq','brew','brew','1.7.1','JSON 命令行处理器','2025-08-18','/usr/local/bin/jq'),
+e('wget','brew','brew','1.25.0','网络文件下载','2025-07-30','/usr/local/bin/wget'),
+e('ripgrep','brew','brew','14.1.0','极速代码搜索（提供 rg）','2025-06-11','/usr/local/bin/rg'),
+e('node','npm','node@brew','22.14.0','Node.js 运行时（brew 安装）','2025-09-20','/usr/local/bin/node'),
+e('tsc','npm','npm@fnm/v22.12.0','5.7.2','TypeScript 编译器','2025-08-01','…/v22.12.0/…/bin/tsc'),
+e('typescript-language-server','npm','npm@fnm/v22.12.0','4.3.0','TypeScript LSP 服务','2025-08-01','…/v22.12.0/…/bin/typescript-language-server'),
+e('pm2','npm','npm@fnm/v22.12.0','5.4.2','Node 进程管理器','2025-05-19','…/v22.12.0/…/bin/pm2'),
+e('tsc','npm','npm@fnm/v22.22.0','5.8.2','TypeScript 编译器','2025-09-25','…/v22.22.0/…/bin/tsc'),
+e('eslint','npm','npm@fnm/v22.22.0','9.18.0','JS/TS 代码检查','2025-09-25','…/v22.22.0/…/bin/eslint'),
+e('tsc','npm','npm@nvm/v24.3.0','5.9.0','TypeScript 编译器（dev）','2025-10-02','~/.nvm/versions/node/v24.3.0/bin/tsc'),
+e('tsx','npm','npm@nvm/v24.3.0','4.19.2','直接执行 TS 脚本','2025-10-02','~/.nvm/versions/node/v24.3.0/bin/tsx'),
+e('conda','conda','conda:miniforge3/base','24.7.1','包与环境管理器','2025-04-10','~/miniforge3/bin/conda'),
+e('python','conda','conda:miniforge3/base','3.11.5','Python 解释器','2025-04-10','~/miniforge3/bin/python'),
+e('mamba','conda','conda:miniforge3/base','1.5.9','并发版 conda 前端','2025-04-10','~/miniforge3/bin/mamba'),
+e('python','conda','conda:miniforge3/envs/ml','3.12.4','Python 解释器（ml 环境）','2025-08-22','~/miniforge3/envs/ml/bin/python'),
+e('jupyter','conda','conda:miniforge3/envs/ml','1.1.1','交互式 Notebook（仅 ml 环境激活时可用）','2025-08-22','~/miniforge3/envs/ml/bin/jupyter'),
+e('pip','conda','conda:miniforge3/envs/ml','24.2','Python 包安装器','2025-08-22','~/miniforge3/envs/ml/bin/pip'),
+e('uvicorn','conda','conda:miniforge3/envs/web','0.32.0','ASGI 服务器（仅 web 环境激活时可用）','2025-09-12','~/miniforge3/envs/web/bin/uvicorn'),
+e('uv','conda','conda:miniforge3/envs/web','0.5.21','极速 Python 工具链','2025-09-12','~/miniforge3/envs/web/bin/uv'),
+e('python','conda','conda:anaconda3/base','3.10.14','Python 解释器（旧安装）','2024-11-30','~/anaconda3/bin/python'),
+e('sccache','cargo','cargo','0.9.1','Rust/C 编译缓存','2025-07-08','~/.cargo/bin/sccache'),
+e('just','cargo','cargo','1.38.0','命令运行器，make 替代','2025-06-20','~/.cargo/bin/just'),
+e('sd','cargo','cargo','1.0.0','sed 的现代替代','2025-06-20','~/.cargo/bin/sd'),
+e('dlv','go','go','1.23.1','Go 调试器 delve','2025-07-15','~/go/bin/dlv'),
+e('gopls','go','go','0.17.0','Go 语言服务器 LSP','2025-07-15','~/go/bin/gopls'),
+e('staticcheck','go','go','2024.1.1','Go 静态分析','2025-07-15','~/go/bin/staticcheck'),
+e('ruby','rvm','rvm/ruby-3.2.2','3.2.2','Ruby 解释器','2025-02-10','~/.rvm/bin/ruby'),
+e('rg','app','app:ZCode','14.1.1','ripgrep（ZCode 内嵌副本）','2025-01-05','/Applications/ZCode.app/…/ripgrep/rg'),
+e('ugrep','app','app:ZCode','7.0.2','ugrep 搜索器','2025-01-05','/Applications/ZCode.app/…/ugrep'),
+e('bfs','app','app:ZCode','1.8.1','广度优先版 find','2025-01-05','/Applications/ZCode.app/…/bfs'),
+e('my-script','manual','manual','—','自写的杂项脚本','2025-10-01','/usr/local/bin/my-script'),
+];
+function e(name,source,origin,version,desc,installed,path){return{name,source,origin,version,desc,installed,path}}
+const CN={system:'系统',brew:'brew',npm:'node/npm',conda:'conda',cargo:'cargo',go:'go',rvm:'rvm',app:'app',manual:'manual'};
+const SUBLBL={conda:'环境',npm:'node 版本'};
+const TABS=['all','system','brew','npm','conda','cargo','go','rvm','app','manual'];
+let st={tab:'all',sub:'all',sel:0,filter:''};
+function normScope(x){
+  if(x.source==='conda')return x.origin.slice(6);
+  if(x.source==='npm')return x.origin.replace(/^node@|^npm@/,'');
+  return '';
+}
+function subs(tab){
+  if(tab!=='conda'&&tab!=='npm')return null;
+  const s=[...new Set(E.filter(x=>x.source===tab).map(normScope))];
+  return['all',...s.sort()];
+}
+function inSub(x){
+  if(st.tab!=='conda'&&st.tab!=='npm')return true;
+  if(st.sub==='all')return true;
+  return normScope(x)===st.sub;
+}
+function matchText(x){if(!st.filter)return true;const q=st.filter.toLowerCase();
+  return(x.name+' '+x.desc+' '+x.origin).toLowerCase().includes(q)}
+function view(){
+  if(st.tab==='all'){
+    const g=new Map();
+    for(const x of E){if(!inSub(x)||!matchText(x))continue;
+      if(!g.has(x.name))g.set(x.name,[]);g.get(x.name).push(x)}
+    return[...g.entries()].map(([name,provs])=>({name,provs}));
+  }
+  return E.filter(x=>x.source===st.tab&&inSub(x)&&matchText(x)).map(x=>({name:x.name,provs:[x]}));
+}
+function badge(s,label){return`<span class="badge b-${s}">${label??CN[s]}</span>`}
+function aggSource(provs){
+  const seen=new Set();let out='';
+  for(const p of provs){const key=normScope(p)||p.origin;
+    if(seen.has(key))continue;seen.add(key);
+    const label=p.source==='npm'||p.source==='conda'?key:p.origin;
+    out+=badge(p.source,label)}
+  return out;
+}
+function render(){
+  const tb=document.getElementById('tabs');tb.innerHTML='';
+  for(const t of TABS){
+    const cnt=t==='all'?new Set(E.filter(inSub).map(x=>x.name)).size:
+      E.filter(x=>x.source===t&&inSub(x)).length;
+    const b=document.createElement('button');
+    b.className='tab'+(st.tab===t?' on':'');
+    b.innerHTML=(t==='all'?'All':CN[t])+`<span class="n">${cnt}</span>`;
+    b.onclick=()=>{st.tab=t;st.sub='all';st.sel=0;render()};
+    tb.appendChild(b);
+  }
+  const ss=subs(st.tab),sb=document.getElementById('subtabs'),ns=document.getElementById('nosub');
+  if(ss){
+    ns.classList.add('hidden');sb.classList.remove('hidden');
+    sb.innerHTML=`<span class="lbl">${SUBLBL[st.tab]}：</span>`;
+    ss.forEach(s=>{
+      const d=document.createElement('span');
+      d.className='sub k-'+st.tab+(st.sub===s?' on':'');
+      const cnt=s==='all'?E.filter(x=>x.source===st.tab).length:
+        E.filter(x=>x.source===st.tab&&normScope(x)===s).length;
+      d.textContent=(s==='all'?(st.tab==='conda'?'所有环境':'所有版本'):s)+` · ${cnt}`;
+      d.onclick=()=>{st.sub=s;st.sel=0;render()};
+      sb.appendChild(d);
+    });
+  }else{
+    sb.classList.add('hidden');ns.classList.remove('hidden');
+  }
+  const rows=view(),tb2=document.getElementById('rows');tb2.innerHTML='';
+  rows.forEach((r,i)=>{
+    const p0=r.provs[0];
+    const tr=document.createElement('tr');
+    tr.className='row'+(i===st.sel?' sel':'');
+    tr.innerHTML=`<td>${r.name}${r.provs.length>1?`<span class="x">×${r.provs.length}</span>`:''}</td>
+      <td>${aggSource(r.provs)}</td><td>${p0.version}</td>
+      <td class="dim">${p0.installed}</td><td class="desc">${p0.desc}</td>`;
+    tr.onclick=()=>{st.sel=i;render()};
+    tr.ondblclick=()=>openDetail(r);
+    tb2.appendChild(tr);
+  });
+  if(st.sel>=rows.length)st.sel=Math.max(0,rows.length-1);
+  const scopeNote=ss&&st.sub!=='all'?` · ${SUBLBL[st.tab]} ${st.sub}`:'';
+  document.getElementById('stat').textContent=`${rows.length} 条${scopeNote}`;
+  const selEl=tb2.children[st.sel];if(selEl)selEl.scrollIntoView({block:'nearest'});
+}
+function cycleSub(d){
+  const ss=subs(st.tab);if(!ss)return;
+  st.sub=ss[(ss.indexOf(st.sub)+d+ss.length)%ss.length];st.sel=0;render();
+}
+function openDetail(r){
+  const eff=r.provs.find(p=>p.source!=='app')||r.provs[0];
+  document.getElementById('sheet').innerHTML=
+    `<span class="close" onclick="closeDetail()">[Esc] 关闭 ✕</span>
+     <h2>${r.name}${r.provs.length>1?`<span class="x">· ${r.provs.length} 个提供者</span>`:''}</h2>
+     ${r.provs.map(p=>`<div class="prov">${p===eff?'<div class="eff">● 当前生效（PATH 中最前）</div>':''}
+       <div>${badge(p.source)}<span style="font-size:12px">${p.origin}</span></div>
+       <div class="kv"><b>VERSION</b><span>${p.version}</span><b>INSTALLED</b><span>${p.installed}（近似）</span>
+       <b>PATH</b><span>${p.path}</span><b>DESC</b><span>${p.desc}</span></div></div>`).join('')}
+     ${r.provs.length>1?`<div class="note">同名多来源：按 PATH 目录顺序，靠前者遮蔽靠后者。conda 环境类命令仅在对应环境激活时进入 PATH。</div>`:''}
+     <div class="note">数据来自本地索引（SQLite），安装时间为近似值。</div>`;
+  document.getElementById('overlay').classList.remove('hidden');
+}
+function closeDetail(){document.getElementById('overlay').classList.add('hidden')}
+let toastTimer;
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),1200)}
+document.getElementById('overlay').onclick=ev=>{if(ev.target.id==='overlay')closeDetail()};
+const filterEl=document.getElementById('filter');
+filterEl.oninput=()=>{st.filter=filterEl.value;st.sel=0;render()};
+document.onkeydown=ev=>{
+  const typing=ev.target===filterEl;
+  if(!document.getElementById('overlay').classList.contains('hidden')){
+    if(ev.key==='Escape')closeDetail();return;
+  }
+  if(ev.key==='Escape'&&typing){filterEl.blur();return}
+  if(ev.key==='/'&&!typing){ev.preventDefault();filterEl.focus();return}
+  if(typing)return;
+  const rows=view();
+  if(ev.key==='Tab'){ev.preventDefault();
+    const i=TABS.indexOf(st.tab);st.tab=TABS[(i+(ev.shiftKey?-1:1)+TABS.length)%TABS.length];
+    st.sub='all';st.sel=0;render();return}
+  if(ev.key==='ArrowRight'||ev.key==='l'){ev.preventDefault();cycleSub(1);return}
+  if(ev.key==='ArrowLeft'||ev.key==='h'){ev.preventDefault();cycleSub(-1);return}
+  if(ev.key==='ArrowDown'||ev.key==='j'){ev.preventDefault();st.sel=Math.min(rows.length-1,st.sel+1);render();return}
+  if(ev.key==='ArrowUp'||ev.key==='k'){ev.preventDefault();st.sel=Math.max(0,st.sel-1);render();return}
+  if(ev.key==='Enter'&&rows.length){openDetail(rows[st.sel]);return}
+  if(ev.key==='q'){toast('q：退出 cmds（浏览器演示中不生效）')}
+};
+render();
+</script>
+</body>
+</html>
