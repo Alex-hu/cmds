@@ -2,7 +2,7 @@
 # cmds installer for macOS — downloads a prebuilt binary from GitHub Releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Alex-hu/cmds/main/install.sh | bash
+#   curl -fsSL https://github.com/Alex-hu/cmds/releases/latest/download/install.sh | bash
 #
 # Options:
 #   --version <tag>   install a specific release tag (default: latest)
@@ -54,6 +54,16 @@ for cmd in curl tar shasum install; do
   command -v "$cmd" >/dev/null 2>&1 || die "required command not found: $cmd"
 done
 
+# curl -f 重试：4xx 不属于 curl --retry 的默认重试范围，且 --retry-all-errors
+# 依赖较新 curl，这里用 shell 循环对任意失败重试，兼容老系统自带 curl。
+fetch() {
+  for attempt in 1 2 3; do
+    curl -fsSL "$@" && return 0
+    [ "$attempt" -lt 3 ] && echo "  retry $attempt/3 ..." >&2 && sleep 2
+  done
+  return 1
+}
+
 [ "$(uname -s)" = "Darwin" ] || die "unsupported OS: $(uname -s) (this build is macOS-only for now)"
 
 # Rosetta 下 uname -m 报 x86_64，优先装原生 arm64
@@ -68,8 +78,8 @@ case "$ARCH" in
 esac
 
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL --retry 3 "https://api.github.com/repos/${REPO}/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+  VERSION="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)" || true
   [ -n "$VERSION" ] || die "failed to resolve latest release (is https://github.com/${REPO} public?)"
 fi
 
@@ -80,9 +90,9 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "==> Downloading ${ASSET}"
-curl -fSL --retry 3 --progress-bar -o "$TMP/$ASSET" "${BASE_URL}/${ASSET}" \
+fetch --progress-bar -o "$TMP/$ASSET" "${BASE_URL}/${ASSET}" \
   || die "download failed — does ${VERSION} ship a macOS ${ARCH} asset?"
-curl -fsSL --retry 3 -o "$TMP/$ASSET.sha256" "${BASE_URL}/${ASSET}.sha256"
+fetch -o "$TMP/$ASSET.sha256" "${BASE_URL}/${ASSET}.sha256"
 
 echo "==> Verifying checksum"
 (cd "$TMP" && shasum -a 256 -c "$ASSET.sha256" >/dev/null) || die "checksum mismatch"

@@ -64,6 +64,10 @@ jobs:
             rm stage/cmds
           done
           rm -r stage
+          # install.sh 随 Release 分发：一键安装命令用
+          # releases/latest/download/install.sh 这一稳定地址，不依赖
+          # raw.githubusercontent.com（该域名在部分网络下不可达）
+          cp install.sh dist/
           cd dist
           for f in *.tar.gz; do
             shasum -a 256 "$f" > "$f.sha256"
