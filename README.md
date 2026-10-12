@@ -1,77 +1,114 @@
-# cmds — 本机命令行工具索引与查询
+# cmds
 
-扫描这台 Mac 上所有已安装的 CLI 命令，按**来源**归类——系统命令、Homebrew、各版本 Node 下的 npm 全局包、各 conda 环境的命令、cargo / go 安装的工具、应用内嵌命令——并给出版本、功能描述、安装位置、安装时间。本地 SQLite 索引，查询毫秒级。
+> **Index, categorize, and search all installed CLI commands on macOS with millisecond SQLite queries, an interactive 3-level TUI browser, and AI-agent friendly environment guidance.**
 
-## 它解决什么问题
+[English](README.md) | [简体中文](README_zh.md)
 
-- 机器上有 brew / fnm / nvm 多套 node：`tsc`、`claude` 在每个版本下各装了一份，都是什么版本？当前生效的是哪个？
-- conda 好几个环境：`jupyter` 装在哪个环境里？
-- `/usr/local/bin` 里这个命令是谁装的、什么版本、什么时候装的、被 PATH 里更靠前的同名命令遮蔽了吗？
+---
 
-## 快速开始
+## Why cmds?
 
-### 1. 环境依赖
+Modern developer workstations accumulate hundreds or thousands of CLI commands across fragmented package managers and runtimes:
 
-- **V 语言**：0.5.x（[安装指引](https://vlang.io)）
-- **零系统级外部依赖**：本项目已内置第三方独立 SQLite 驱动模块，解耦了对系统 `pkg-config` 的依赖，开箱即用。
+- **Multiple Node Versions (fnm, nvm, brew)**: `tsc`, `claude`, and `pnpm` might be installed across 3 different Node installations. Which versions are installed? Which one is active in your current `$PATH`?
+- **Multiple Python / Conda Environments**: Is `jupyter` installed in `base`, `py312`, or `miniforge3`? How do you activate the right environment?
+- **PATH Shadowing & Mystery Binaries**: Who put that binary in `/usr/local/bin`? What version is it, and is it being masked by another command earlier in `$PATH`?
+- **AI Agent Automation**: AI coding agents frequently struggle to identify installed CLI tools, often guessing commands or receiving truncated terminal outputs. `cmds` provides structured, actionable instructions (such as `Switch Env: conda activate py312` and absolute executable paths).
 
-### 2. 构建与运行
+---
 
-推荐使用工程化 `make`（自动校验依赖并编译）：
+## Key Features
+
+- **3-Level Taxonomy Hierarchy**:
+  - **Level 1 (Ecosystem)**: `node`, `python`, `go`, `rust`, `brew`, `system`, `app`, `manual`
+  - **Level 2 (Package Manager)**: `fnm`, `nvm`, `pnpm`, `anaconda3`, `miniforge3`, `uv`, `cargo`, `go`, `brew`, `system`
+  - **Level 3 (Scope / Environment)**: Isolated environments or versions such as `base`, `py312`, `v24.11.1`
+- **Interactive TUI Browser (`cmds list -i`)**:
+  - Nushell-style border rendering.
+  - Multi-level interactive tabs with keyboard navigation (`Tab` / `Shift+Tab` or numbers).
+  - Horizontal viewport scrolling and automatic empty-tab collapsing.
+  - Terminal-height dynamic pagination with sticky headers.
+- **AI-Friendly Smart Search (`cmds search`)**:
+  - Multi-word keyword search with weighted relevance ranking.
+  - Zero-truncation output for full executable paths and descriptions.
+  - Actionable status tags: `[Ready in PATH]` vs `[Not in PATH]`.
+  - Concrete execution guidance and environment activation commands (`conda activate <env>`, `fnm use <version>`, etc.).
+  - High-signal text block format or machine-readable `--json` array.
+- **Safe & Fast**:
+  - **Zero Command Execution**: Reads only package manifests (`package.json`, `conda-meta`, `.crates2.json`), Homebrew receipts, and Mach-O/Go build info. Never executes untrusted binaries during indexing.
+  - **Zero Network Calls**: 100% offline, local SQLite database (`~/Library/Caches/cmds/index.db`).
+  - **High Performance**: Parallel directory scanning and batch database writes. Indexes 3,000+ commands in seconds; queries return in milliseconds.
+- **Zero C Runtime Dependencies**: Built-in self-contained SQLite3 driver without requiring system `pkg-config` setup; compiles out-of-the-box on macOS Apple Silicon (arm64) and Intel (x86_64).
+
+---
+
+## Quick Start
+
+### 1. Requirements
+
+- **V Compiler**: 0.5.x ([Installation Guide](https://vlang.io))
+- macOS (Apple Silicon or Intel)
+
+### 2. Build & Install
 
 ```sh
-make prod         # 检查依赖并进行生产构建（或直接运行 v -prod -o cmds .）
-./cmds update     # 建立索引（样例机器：3417 条命令，约 6 秒）
-./cmds list --source brew
+# Clone repository
+git clone https://github.com/Alex-hu/cmds.git
+cd cmds
+
+# Build production binary (checks dependencies automatically)
+make prod
+# Or directly compile with V:
+# v -prod -o cmds .
+
+# Build initial index (takes ~5 seconds for ~3,500 commands)
+./cmds update
 ```
 
-开发模式：`v run . update`。
+---
 
-### 3. 依赖管理
-
-- 本项目支持按需引入第三方库，在 `v.mod` 中声明（`dependencies: [...]`）；
-- 克隆或添加依赖后，运行 `make deps`（或 `v sync`）自动同步还原依赖。
-
-## 使用
+## Usage
 
 ```
 Usage: cmds [options] <command> [args]
 
 Commands:
-  update [--deep]                 重建索引（deep 探测见路线图）
-  list [--source S] [--scope E]   列出已索引命令（支持静态表格与 -i 交互浏览）
-  search [options] <query...>     智能检索命令（支持多词、AI 友好格式与环境切换提示）
-  version                         打印版本信息。
-  help                            显示帮助。
-
-先运行 cmds update 建立索引。
+  update [--deep]                 Rebuild command index
+  list [--source S] [--scope E]   List indexed commands (supports -i interactive TUI)
+  search [options] <query...>     Intelligent search with environment switching guidance
+  version                         Print version information
+  help                            Show help
 ```
 
-全局选项：`-v, --verbose` 显示各源扫描/富化统计；`-h/--help`、`--version` 自动生成。
+Global options: `-v, --verbose` (detailed scanning/enrichment statistics).
 
-### 智能搜索（AI 与终端友好）
+---
 
-`cmds search` 支持多词组合模糊匹配，零路径截断，并在输出中提供明确的 PATH 可用性状态与环境切换指引：
+### 1. Smart Search (`cmds search`)
+
+Search for commands with multi-word queries, relevance ranking, and environment guidance:
 
 ```sh
-# 关键词搜索（支持多词、自动加权排序）
+# Basic search
 cmds search agent
 cmds search "agent browser"
 
-# 仅查找当前 PATH 即可直接调用的命令
+# Restrict to commands directly executable in current PATH
 cmds search jupyter --in-path
 
-# 面向 AI Agent / 自动化工具调用的 JSON 格式
-cmds search browser-use --json
-
-# 限制返回条数或以表格输出
+# Limit number of results
 cmds search python -n 5
+
+# Table view
 cmds search jupyter --table
+
+# JSON output for AI agents / scripts
+cmds search browser-use --json
 ```
 
-AI 友好输出示例：
+#### Search Output Example (Human & AI Friendly)
 
-```
+```text
 $ cmds search jupyter
 Found 2 command(s) matching "jupyter":
 
@@ -89,81 +126,81 @@ Found 2 command(s) matching "jupyter":
    Realpath:    /Users/alex/anaconda3/envs/py312/bin/jupyter
 ```
 
-按生态/管理器/范围过滤列表：
+#### Structured JSON Output Example (`--json`)
+
+```json
+[
+  {
+    "name": "jupyter",
+    "ecosystem": "python",
+    "manager": "anaconda3",
+    "scope": "py312",
+    "version": "",
+    "description": "",
+    "installed_at": "",
+    "in_path": false,
+    "how_to_run": "/Users/alex/anaconda3/envs/py312/bin/jupyter",
+    "switch_env": "conda activate py312",
+    "realpath": "/Users/alex/anaconda3/envs/py312/bin/jupyter"
+  }
+]
+```
+
+---
+
+### 2. List & Interactive TUI (`cmds list`)
 
 ```sh
+# Launch interactive 3-level tab browser
+cmds list -i
+
+# Filter by ecosystem, manager, or environment
 cmds list --ecosystem node --manager fnm --scope v24.11.1
 cmds list --ecosystem python --manager anaconda3 --scope py312
-cmds list -i                                      # 启动交互式三级分类 Tab 浏览器
+
+# Output static plain Nushell table
+cmds list --plain
 ```
 
-真实输出示例（节选）：
+---
 
-```
-$ cmds --verbose update
-扫描 23 个目录，3422 个文件
-去重后 3417 条
-npm: 32 条已富化
-brew: 954 条已富化
-conda: 1030 条已富化
-...
-已索引 3417 条命令 → ~/Library/Caches/cmds/index.db（6178ms，warnings=0）
+## Taxonomy Matrix
 
-$ cmds list --source npm
-NAME        SOURCE  SCOPE          VERSION  INSTALLED           PATH
-claude      npm     fnm/v24.3.0    2.1.150  2026-05-23 08:01    ~/.local/share/fnm/.../claude-code/bin/claude.exe
-claude      npm     nvm/v24.3.0    2.0.42   2025-11-16 15:35    ~/.nvm/versions/node/v24.3.0/.../cli.js
-tsc         npm     usr/local      5.0.2    ...                 /usr/local/lib/node_modules/typescript/bin/tsc
-```
+| Ecosystem | Managers Detected | Scope / Environment Example | Detection Source |
+|---|---|---|---|
+| `node` | `fnm`, `nvm`, `pnpm`, `brew`, `system` | `v24.11.1`, `v22.12.0` | Global `package.json` manifests & node version directories |
+| `python` | `anaconda3`, `miniforge3`, `miniconda3`, `uv` | `base`, `py312`, `ml` | `conda-meta/*.json` & environment directories |
+| `rust` | `cargo` | — | `~/.cargo/.crates2.json` (shims filtered) |
+| `go` | `go` | — | `$GOPATH/bin` with `go version -m` embedded build info |
+| `brew` | `brew` | — | `/opt/homebrew` & `/usr/local` Cellar metadata |
+| `system` | `system` | — | `/bin`, `/usr/bin`, `/sbin`, `/usr/sbin` |
+| `app` | `app` | `app:Cursor`, `app:Docker` | Executables embedded in macOS `.app` bundles |
+| `manual` | `manual` | — | Remaining custom directories in `$PATH` |
 
-索引缓存：`~/Library/Caches/cmds/index.db`（SQLite，可用环境变量 `CMDS_CACHE_DIR` 覆盖目录）。查询命令只读缓存，重建索引用 `cmds update`。
+---
 
-## 来源分类
-
-| source | 覆盖内容 | origin / scope 示例 |
-|---|---|---|
-| `system` | /bin、/usr/bin、/sbin、/usr/sbin | `system` |
-| `brew` | Homebrew（Intel `/usr/local` 与 M 系列 `/opt/homebrew` 双前缀，并存都扫） | `brew`，版本取自 Cellar 路径与 brew 元数据 |
-| `npm` | 每个 node 安装（brew Cellar / fnm / nvm / 旧式 /usr/local）下的全局包与 node 本体 | scope：`brew`、`fnm/v22.12.0`、`nvm/v24.3.0`、`usr/local` |
-| `conda` | 每套安装（anaconda3 / miniforge3 / miniconda3）的 base 与全部 `envs/*` | scope：`miniforge3/base`、`miniforge3/envs/ml` |
-| `cargo` | `~/.cargo/bin`（rustup shim 自动识别并跳过） | `cargo` |
-| `go` | `$GOPATH/bin`，`go version -m` 读二进制内嵌构建信息 | `go` |
-| `rvm` | `~/.rvm/bin` | `rvm` |
-| `app` | PATH 中位于 `*.app` bundle 内的目录（如 ZCode 内嵌的 rg） | `app:ZCode` |
-| `manual` | PATH 中无法归因到以上来源的目录（兜底） | `manual` |
-
-新增一种来源只需实现 `Source` 接口并注册，核心管道与 UI 零改动（见 [ARCHITECTURE.md](ARCHITECTURE.md)）。
-
-## 数据字段
-
-每条命令记录：名称、来源（source/origin/scope）、真实路径（符号链接已解析）、在 PATH 中的每次出现（用于同名遮蔽分析）、版本、描述、安装时间、文件大小、类型（binary/script）。
-
-安装时间为近似值（文件/包目录 mtime），例外：brew 用其元数据中的真实安装时间戳。
-
-## 安全性
-
-- 索引过程**只读文件系统元数据与各包管理器自己的注册信息**（package.json、conda-meta、.crates2.json、`go version -m`），不执行任何被索引的命令。
-- 全部数据留在本机，无网络请求。
-
-## 平台
-
-仅支持 macOS，Intel 与 Apple Silicon 均可（Homebrew 双前缀自动探测）。
-
-## 路线图
-
-- **M2**：`cmds info <name>`（多提供者 + 遮蔽关系）、`cmds which <name>`、`cmds search`、`--json` 输出、CJK 对齐表格
-- **M3**：交互式 TUI——一级来源 tab + 二级环境/node 版本 tab（原型见 [mockups/](mockups/index.html)）
-- **M4**：`update --deep`（并行 `--version` 探测补全系统命令版本，带超时与跳过名单）、whatis 描述
-- **M5**：`cmds dupes`（同名冲突清单）、`cmds doctor`（PATH 重复项/死目录/遮蔽诊断）
-
-## 开发
+## Development
 
 ```sh
-v test .      # 36 个测试
-v build .
+# Run all unit and integration tests
+v test .
+
+# Format and vet code (enforces zero warnings and zero notices)
 v fmt -w . && v vet .
+
+# Build release binary
+make prod
 ```
 
-文档分工：[DESIGN.md](DESIGN.md) 产品需求 · [ARCHITECTURE.md](ARCHITECTURE.md) 代码架构 · [PLAN.md](PLAN.md) 开发计划 · [AGENTS.md](AGENTS.md) 工程规范 · [docs/SPIKE.md](docs/SPIKE.md) 各源元数据格式实测记录。
+### Documentation & Design References
 
-License: MIT
+- [docs/HIERARCHY_3LEVEL_DESIGN.md](docs/HIERARCHY_3LEVEL_DESIGN.md) — 3-Level classification architecture design.
+- [docs/SEARCH_CMD_DESIGN.md](docs/SEARCH_CMD_DESIGN.md) — Search command specifications and AI guidance rules.
+- [docs/SPIKE.md](docs/SPIKE.md) — Real-world CLI metadata spike reports.
+- [AGENTS.md](AGENTS.md) — Workspace coding standards and V guidelines.
+
+---
+
+## License
+
+[MIT](LICENSE)
