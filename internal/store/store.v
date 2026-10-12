@@ -5,7 +5,7 @@ import thirdparty.sqlite
 import time
 
 // schema_version 是当前索引库的 schema 版本，对应 SQLite 的 PRAGMA user_version。
-pub const schema_version = 1
+pub const schema_version = 2
 
 // Store 是 SQLite 索引库的读写句柄（库文件路径见 DESIGN.md「数据模型」节，测试可用 ':memory:'）。
 pub struct Store {
@@ -15,12 +15,12 @@ mut:
 
 // insert_entry_sql 写入一条 entry；可空 text 列用 nullif(?, '') 保证空串存为 NULL，
 // 读回时 NULL 与空串都映射为 ''（语义相等）。
-const insert_entry_sql = "insert into entries (name, source, origin, scope, realpath, in_path,
+const insert_entry_sql = "insert into entries (name, source_id, ecosystem, manager, origin, scope, realpath, in_path,
 	version, description, installed_at, size_bytes, kind)
-	values (?, ?, ?, nullif(?, ''), ?, ?, nullif(?, ''), nullif(?, ''), nullif(?, ''), ?, nullif(?, ''))"
+	values (?, ?, ?, ?, ?, nullif(?, ''), ?, ?, nullif(?, ''), nullif(?, ''), nullif(?, ''), ?, nullif(?, ''))"
 
 // select_entry_sql 读回 entry 全字段（不含 occurrences，后者单独查询后挂载）。
-const select_entry_sql = 'select id, name, source, origin, scope, realpath, in_path, version,
+const select_entry_sql = 'select id, name, source_id, ecosystem, manager, origin, scope, realpath, in_path, version,
 	description, installed_at, size_bytes, kind from entries'
 
 // open 打开（必要时创建）path 处的索引库：user_version 为 0 且无表时建当前 schema；
@@ -61,7 +61,9 @@ fn (mut s Store) do_save_all(entries []model.Entry) ! {
 	for e in entries {
 		s.db.exec_param_many(insert_entry_sql, [
 			e.name,
-			e.source,
+			e.source_id,
+			e.ecosystem,
+			e.manager,
 			e.origin,
 			e.scope,
 			e.realpath,
@@ -89,18 +91,22 @@ fn (mut s Store) do_save_all(entries []model.Entry) ! {
 
 // load_all 读回全部 Entry（含 occurrences，按 path_priority 升序），等价于 query 全空参。
 pub fn (s Store) load_all() ![]model.Entry {
-	return s.query('', '', '')
+	return s.query('', '', '', '')
 }
 
-// query 组合过滤：source/scope/name_contains 传空串表示该维度不过滤；
+// query 组合过滤：ecosystem/manager/scope/name_contains 传空串表示该维度不过滤；
 // name_contains 用 LIKE '%'||?||'%' 匹配 name 子串。返回按 name、realpath 排序，
 // occurrences 按 path_priority 升序挂载。
-pub fn (s Store) query(source string, scope string, name_contains string) ![]model.Entry {
+pub fn (s Store) query(ecosystem string, manager string, scope string, name_contains string) ![]model.Entry {
 	mut q := select_entry_sql + ' where 1=1'
 	mut params := []string{}
-	if source != '' {
-		q += ' and source = ?'
-		params << source
+	if ecosystem != '' {
+		q += ' and ecosystem = ?'
+		params << ecosystem
+	}
+	if manager != '' {
+		q += ' and manager = ?'
+		params << manager
 	}
 	if scope != '' {
 		q += ' and scope = ?'
@@ -152,7 +158,9 @@ pub fn (mut s Store) close() {
 fn row_to_entry(r sqlite.Row) model.Entry {
 	return model.Entry{
 		name:         r.get_string('name')
-		source:       r.get_string('source')
+		source_id:    r.get_string('source_id')
+		ecosystem:    r.get_string('ecosystem')
+		manager:      r.get_string('manager')
 		origin:       r.get_string('origin')
 		scope:        r.get_string('scope')
 		realpath:     r.get_string('realpath')
@@ -177,13 +185,15 @@ fn drop_all(mut db sqlite.DB) ! {
 }
 
 // create_schema 建当前版本的表/索引并把 user_version 写为 schema_version。
-// 表名/列名与 DESIGN.md「数据模型」的 schema v1 一致；exec 一次只执行一条语句
+// 表名/列名与 DESIGN.md「数据模型」的 schema v2 一致；exec 一次只执行一条语句
 // （底层 prepare_v2 不支持多语句），故逐条调用。
 fn create_schema(mut db sqlite.DB) ! {
 	db.exec('create table entries (
 		id            integer primary key,
 		name          text not null,
-		source        text not null,
+		source_id     text not null,
+		ecosystem     text not null,
+		manager       text not null,
 		origin        text not null,
 		scope         text,
 		realpath      text not null,
@@ -196,7 +206,7 @@ fn create_schema(mut db sqlite.DB) ! {
 	)')!
 	db.exec('create unique index ux_entry on entries(name, realpath)')!
 	db.exec('create index ix_name on entries(name)')!
-	db.exec('create index ix_source on entries(source, scope)')!
+	db.exec('create index ix_hierarchy on entries(ecosystem, manager, scope)')!
 	db.exec('create table occurrences (
 		entry_id      integer not null references entries(id),
 		path          text not null,

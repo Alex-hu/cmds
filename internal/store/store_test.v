@@ -7,8 +7,10 @@ import os
 fn e1() model.Entry {
 	return model.Entry{
 		name:         'tsc'
-		source:       'npm'
-		origin:       'npm@fnm/v22.12.0'
+		source_id:    'npm'
+		ecosystem:    'node'
+		manager:      'fnm'
+		origin:       'fnm:v22.12.0'
 		realpath:     '/n/tsc'
 		in_path:      true
 		occurrences:  [
@@ -27,7 +29,9 @@ fn e1() model.Entry {
 fn e2() model.Entry {
 	return model.Entry{
 		name:         'jupyter'
-		source:       'conda'
+		source_id:    'conda'
+		ecosystem:    'python'
+		manager:      'conda'
 		origin:       'conda:miniforge3/envs/ml'
 		scope:        'miniforge3/envs/ml'
 		realpath:     '/m/jupyter'
@@ -44,7 +48,9 @@ fn e2() model.Entry {
 fn e3() model.Entry {
 	return model.Entry{
 		name:         'git'
-		source:       'brew'
+		source_id:    'brew'
+		ecosystem:    'brew'
+		manager:      'brew'
 		origin:       'brew'
 		realpath:     '/usr/local/bin/git'
 		in_path:      true
@@ -70,8 +76,10 @@ fn test_round_trip() {
 	// 逐条按 realpath 找回后逐字段断言（load_all 按 name、realpath 排序，不依赖写入顺序）
 	g1 := got.filter(it.realpath == '/n/tsc')[0]
 	assert g1.name == 'tsc'
-	assert g1.source == 'npm'
-	assert g1.origin == 'npm@fnm/v22.12.0'
+	assert g1.source_id == 'npm'
+	assert g1.ecosystem == 'node'
+	assert g1.manager == 'fnm'
+	assert g1.origin == 'fnm:v22.12.0'
 	assert g1.scope == ''
 	assert g1.in_path == true
 	assert g1.version == '5.6.3'
@@ -86,6 +94,8 @@ fn test_round_trip() {
 	assert g1.occurrences[1].path == '/b/tsc'
 
 	g2 := got.filter(it.realpath == '/m/jupyter')[0]
+	assert g2.ecosystem == 'python'
+	assert g2.manager == 'conda'
 	assert g2.scope == 'miniforge3/envs/ml' // 非空 scope 往返
 	assert g2.in_path == false
 	assert g2.version == '' // 空串往返（库里为 NULL）
@@ -95,6 +105,8 @@ fn test_round_trip() {
 	assert g2.occurrences[0].path == '/m/jupyter'
 
 	g3 := got.filter(it.realpath == '/usr/local/bin/git')[0]
+	assert g3.ecosystem == 'brew'
+	assert g3.manager == 'brew'
 	assert g3.size_bytes == 53687061234 // u64 大值往返（> 2^31）
 	assert g3.kind == 'binary'
 	assert g3.version == '2.46.0'
@@ -124,23 +136,27 @@ fn test_query_filters() {
 	}
 	s.save_all([e1(), e2(), e3()])!
 	// 空参 = 全量
-	assert s.query('', '', '')!.len == 3
-	// 按 source 过滤
-	by_source := s.query('conda', '', '')!
-	assert by_source.len == 1
-	assert by_source[0].name == 'jupyter'
+	assert s.query('', '', '', '')!.len == 3
+	// 按 ecosystem 过滤
+	by_eco := s.query('python', '', '', '')!
+	assert by_eco.len == 1
+	assert by_eco[0].name == 'jupyter'
+	// 按 manager 过滤
+	by_mgr := s.query('', 'conda', '', '')!
+	assert by_mgr.len == 1
+	assert by_mgr[0].name == 'jupyter'
 	// 按 scope 过滤
-	by_scope := s.query('', 'miniforge3/envs/ml', '')!
+	by_scope := s.query('', '', 'miniforge3/envs/ml', '')!
 	assert by_scope.len == 1
-	assert by_scope[0].source == 'conda'
+	assert by_scope[0].manager == 'conda'
 	// 组合过滤
-	assert s.query('conda', 'miniforge3/envs/ml', '')!.len == 1
-	assert s.query('brew', 'miniforge3/envs/ml', '')!.len == 0
+	assert s.query('python', 'conda', 'miniforge3/envs/ml', '')!.len == 1
+	assert s.query('brew', 'brew', 'miniforge3/envs/ml', '')!.len == 0
 	// 按 name_contains 过滤（LIKE 子串）
-	by_name := s.query('', '', 'py')!
+	by_name := s.query('', '', '', 'py')!
 	assert by_name.len == 1
 	assert by_name[0].name == 'jupyter'
-	assert s.query('', '', 'zzz')!.len == 0
+	assert s.query('', '', '', 'zzz')!.len == 0
 }
 
 fn test_meta_get() {
@@ -193,6 +209,6 @@ fn test_schema_version_mismatch_rebuilds() {
 	}
 	// 重建后的库可正常继续使用
 	s2.save_all([e2()])!
-	assert s2.query('conda', '', '')!.len == 1
+	assert s2.query('python', 'conda', '', '')!.len == 1
 	s2.close()
 }

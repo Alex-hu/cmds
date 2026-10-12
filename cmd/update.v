@@ -59,13 +59,21 @@ fn update_cmd(ctx Context, _ []string) ! {
 	mut entries := []model.Entry{cap: files.len}
 	for f in files {
 		attr := attribute_of(srcs, f.realpath) or {
-			source.Attribution{ source: 'manual', origin: 'manual', scope: '' }
+			source.Attribution{
+				source_id: 'manual'
+				ecosystem: 'manual'
+				manager:   'manual'
+				origin:    'manual'
+				scope:     ''
+			}
 		}
 		dir_norm := os.real_path(f.dir)
 		in_path := dir_norm in prio_by_dir
 		mut e := model.Entry{
 			name:       f.name
-			source:     attr.source
+			source_id:  attr.source_id
+			ecosystem:  attr.ecosystem
+			manager:    attr.manager
 			origin:     attr.origin
 			scope:      attr.scope
 			realpath:   f.realpath
@@ -86,7 +94,7 @@ fn update_cmd(ctx Context, _ []string) ! {
 	// 富化：按源分组，各自就地填充；单源失败降级为 warning 不中断。
 	mut warnings := 0
 	for src in srcs {
-		mut mine := entries.filter(it.source == src.id())
+		mut mine := entries.filter(it.source_id == src.id())
 		if mine.len == 0 {
 			continue
 		}
@@ -98,7 +106,7 @@ fn update_cmd(ctx Context, _ []string) ! {
 		// enrich 操作的是副本，按 (name, realpath) 写回。
 		for enriched in mine {
 			for i, e in entries {
-				if e.source == src.id() && e.name == enriched.name && e.realpath == enriched.realpath {
+				if e.source_id == src.id() && e.name == enriched.name && e.realpath == enriched.realpath {
 					entries[i] = enriched
 				}
 			}

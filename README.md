@@ -38,21 +38,63 @@ make prod         # 检查依赖并进行生产构建（或直接运行 v -prod 
 Usage: cmds [options] <command> [args]
 
 Commands:
-  update [--deep]                  重建索引（deep 探测见路线图）
-  list [--source S] [--scope E]    列出已索引命令
-  version                          打印版本信息。
-  help                             显示帮助。
+  update [--deep]                 重建索引（deep 探测见路线图）
+  list [--source S] [--scope E]   列出已索引命令（支持静态表格与 -i 交互浏览）
+  search [options] <query...>     智能检索命令（支持多词、AI 友好格式与环境切换提示）
+  version                         打印版本信息。
+  help                            显示帮助。
 
 先运行 cmds update 建立索引。
 ```
 
 全局选项：`-v, --verbose` 显示各源扫描/富化统计；`-h/--help`、`--version` 自动生成。
 
-按二级分类过滤（回答"激活该环境 / 该 node 版本时有哪些命令"）：
+### 智能搜索（AI 与终端友好）
+
+`cmds search` 支持多词组合模糊匹配，零路径截断，并在输出中提供明确的 PATH 可用性状态与环境切换指引：
 
 ```sh
-cmds list --source npm --scope nvm/v24.3.0      # 该 node 版本下的全局包
-cmds list --source conda --scope miniforge3/envs/py313
+# 关键词搜索（支持多词、自动加权排序）
+cmds search agent
+cmds search "agent browser"
+
+# 仅查找当前 PATH 即可直接调用的命令
+cmds search jupyter --in-path
+
+# 面向 AI Agent / 自动化工具调用的 JSON 格式
+cmds search browser-use --json
+
+# 限制返回条数或以表格输出
+cmds search python -n 5
+cmds search jupyter --table
+```
+
+AI 友好输出示例：
+
+```
+$ cmds search jupyter
+Found 2 command(s) matching "jupyter":
+
+1. jupyter (v5.3.0) [Ready in PATH]
+   Ecosystem:   python / anaconda3 (scope: base)
+   Description: —
+   Execute:     jupyter
+   Realpath:    /Users/alex/anaconda3/bin/jupyter
+
+2. jupyter [Not in PATH]
+   Ecosystem:   python / anaconda3 (scope: py312)
+   Description: —
+   Switch Env:  conda activate py312
+   Execute:     /Users/alex/anaconda3/envs/py312/bin/jupyter
+   Realpath:    /Users/alex/anaconda3/envs/py312/bin/jupyter
+```
+
+按生态/管理器/范围过滤列表：
+
+```sh
+cmds list --ecosystem node --manager fnm --scope v24.11.1
+cmds list --ecosystem python --manager anaconda3 --scope py312
+cmds list -i                                      # 启动交互式三级分类 Tab 浏览器
 ```
 
 真实输出示例（节选）：

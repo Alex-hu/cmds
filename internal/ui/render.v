@@ -23,9 +23,9 @@ pub fn render_static_table(entries []model.Entry) string {
 	if entries.len == 0 {
 		return '(无匹配条目)'
 	}
-	w_name := 22
-	w_src := 8
-	w_scope := 22
+	w_name := 20
+	w_src := 11
+	w_scope := 20
 	w_ver := 10
 	w_inst := 17
 	w_path := 42
@@ -56,50 +56,104 @@ pub fn render_static_table(entries []model.Entry) string {
 	return sb.str()
 }
 
-// source_color 为不同来源返回专有 ANSI 前景色（与原型 A2 一致）。
-fn source_color(s string) string {
+// ecosystem_color 为不同生态返回专有 ANSI 前景色。
+pub fn ecosystem_color(s string) string {
 	match s {
 		'system' { return '\x1b[38;5;103m' }
 		'brew' { return '\x1b[38;5;178m' }
-		'npm' { return '\x1b[38;5;71m' }
-		'pnpm' { return '\x1b[38;5;215m' }
-		'conda' { return '\x1b[38;5;73m' }
-		'cargo' { return '\x1b[38;5;173m' }
+		'node' { return '\x1b[38;5;71m' }
+		'python' { return '\x1b[38;5;73m' }
+		'rust' { return '\x1b[38;5;173m' }
 		'go' { return '\x1b[38;5;75m' }
-		'rvm' { return '\x1b[38;5;167m' }
+		'ruby' { return '\x1b[38;5;167m' }
 		'app' { return '\x1b[38;5;141m' }
 		'manual' { return '\x1b[38;5;244m' }
 		else { return fg_gray }
 	}
 }
 
-// source_display_name 返回来源的友好中文标签。
-fn source_display_name(s string) string {
+// source_color 兼容别名。
+pub fn source_color(s string) string {
+	return ecosystem_color(s)
+}
+
+// ecosystem_display_name 返回生态的友好显示标签。
+pub fn ecosystem_display_name(s string) string {
 	match s {
 		'all' { return 'All' }
+		'node' { return 'Node' }
+		'python' { return 'Python' }
+		'go' { return 'Go' }
+		'rust' { return 'Rust' }
+		'brew' { return 'Homebrew' }
 		'system' { return '系统' }
-		'brew' { return 'brew' }
-		'npm' { return 'node/npm' }
-		'pnpm' { return 'pnpm' }
-		'conda' { return 'conda' }
-		'cargo' { return 'cargo' }
-		'go' { return 'go' }
-		'rvm' { return 'rvm' }
-		'app' { return 'app' }
-		'manual' { return 'manual' }
+		'app' { return 'App' }
+		'manual' { return 'Manual' }
+		'ruby' { return 'Ruby' }
 		else { return s }
 	}
 }
 
+// source_display_name 兼容别名。
+pub fn source_display_name(s string) string {
+	return ecosystem_display_name(s)
+}
+
+// manager_display_name 返回包/环境管理器的显示标签。
+pub fn manager_display_name(mgr string) string {
+	match mgr {
+		'all' { return '全部' }
+		'anaconda3' { return 'anaconda3' }
+		'miniforge3' { return 'miniforge3' }
+		'miniconda3' { return 'miniconda3' }
+		'uv' { return 'uv' }
+		'fnm' { return 'fnm' }
+		'nvm' { return 'nvm' }
+		'pnpm' { return 'pnpm' }
+		'conda' { return 'conda' }
+		'cargo' { return 'cargo' }
+		'go' { return 'go' }
+		'brew' { return 'brew' }
+		'system' { return 'system' }
+		'manual' { return 'manual' }
+		'app' { return 'app' }
+		'rvm' { return 'rvm' }
+		else { return mgr }
+	}
+}
+
 // subtab_display_name 将长环境路径优化为更紧凑易读的标签（如 anaconda3/envs/myenv -> anaconda3/myenv）。
-pub fn subtab_display_name(cur_tab string, s string) string {
+pub fn subtab_display_name(context string, s string) string {
 	if s == 'all' {
-		return if cur_tab == 'conda' { '所有环境' } else { '所有版本' }
+		if context in ['conda', 'python', 'anaconda3', 'miniforge3', 'miniconda3', 'uv'] {
+			return '所有环境'
+		}
+		if context in ['npm', 'node', 'fnm', 'nvm'] {
+			return '所有版本'
+		}
+		return '全部'
 	}
-	if cur_tab == 'conda' {
-		return s.replace('/envs/', '/')
+	if s == 'toolchain' {
+		return '工具链'
 	}
-	return s
+	if s == 'gopath' {
+		return 'GOPATH'
+	}
+	if s == 'tools' {
+		return '工具'
+	}
+	return s.replace('/envs/', '/')
+}
+
+// format_source_label 组合生态与管理器列显示文本（如 node/fnm, anaconda3, miniforge3, uv, brew）。
+pub fn format_source_label(eco string, mgr string) string {
+	if eco == mgr || mgr == '' {
+		return eco
+	}
+	if eco == 'python' {
+		return mgr
+	}
+	return '${eco}/${mgr}'
 }
 
 // compute_scroll_offset 计算横向滚动视口的起始下标，确保 active_idx 始终在可视范围内。
@@ -299,20 +353,22 @@ pub:
 	width int
 }
 
-// render_view 渲染整个终端视口（Header + Tab栏 + Subtab栏 + Nushell表格 + 状态栏 + 弹窗）。
+// render_view 渲染整个终端视口（Header + 生态栏 + 管理器栏(可选) + 环境栏(可选) + Nushell表格 + 状态栏 + 弹窗）。
 pub fn render_view(mut state AppState, cols int, rows int) string {
-	// 动态计算单屏展示行数 (page_size)
-	// 固定占用 9 行：标题(1) + 一级Tab(1) + 二级Tab(1) + 搜索(1) + 表格顶(1) + 表头(1) + 表格中(1) + 表格底(1) + 底栏(1)
+	// 依据当前显示的 Tab 行动态计算单屏展示行数 (page_size)
+	overhead := state.fixed_overhead()
 	page_size := if state.page_size > 0 {
 		state.page_size
+	} else if rows > overhead + 2 {
+		rows - overhead
 	} else {
-		if rows > 10 { rows - 9 } else { 1 }
+		1
 	}
 
 	// 动态计算各列宽度，确保总宽度不溢出 cols，防止终端折行破坏固定行高
 	avail := if cols > 20 { cols - 19 } else { 30 }
 	mut w_name := 20
-	mut w_src := 10
+	mut w_src := 11
 	mut w_scope := 20
 	mut w_ver := 10
 	mut w_inst := 17
@@ -348,57 +404,85 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 	mut lines := []string{}
 
 	// 1. 顶部标题栏
-	banner := ' cmds · 命令行工具索引与查询 (按来源与环境分类)'
+	banner := ' cmds · 命令行工具索引与查询 (按生态、管理器与环境分类)'
 	lines << pad_line_to_cols('${fg_accent}${ansi_bold}${banner}${ansi_reset}', cols)
 
-	// 2. 一级 Tab 栏（带横向滚动视口与 ◀ ▶ 指示器）
-	mut tab_pills := []string{}
-	mut tab_widths := []int{}
-	for idx, t in state.tabs {
-		count := state.tab_counts[t] or { 0 }
-		label := '${source_display_name(t)} ${count}'
-		pill := if idx == state.active_tab_idx {
+	// 2. 一级生态 Tab 栏（带横向滚动视口与 ◀ ▶ 指示器）
+	mut eco_pills := []string{}
+	mut eco_widths := []int{}
+	for idx, eco in state.ecosystems {
+		count := state.eco_counts[eco] or { 0 }
+		label := '${ecosystem_display_name(eco)} ${count}'
+		pill := if idx == state.active_eco_idx {
 			'${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
 		} else {
 			'${fg_gray} ${label}  ${ansi_reset}'
 		}
-		tab_pills << pill
-		tab_widths << term.printable_len(pill)
+		eco_pills << pill
+		eco_widths << term.printable_len(pill)
 	}
-	tab_line, new_tab_off := build_scrollable_tabs(tab_pills, tab_widths, state.active_tab_idx, state.tab_offset, cols, ' ', false)
-	state.tab_offset = new_tab_off
-	lines << pad_line_to_cols(tab_line, cols)
+	eco_line, new_eco_off := build_scrollable_tabs(eco_pills, eco_widths, state.active_eco_idx,
+		state.eco_offset, cols, ' ', false)
+	state.eco_offset = new_eco_off
+	lines << pad_line_to_cols(eco_line, cols)
 
-	// 3. 二级 Tab 栏（Scope，带横向滚动视口与 ◀ ▶ 指示器）
-	cur_tab := state.tabs[state.active_tab_idx]
-	mut sub_line := ''
-	if cur_tab in ['conda', 'npm'] && state.subtabs.len > 0 {
-		prefix_str := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
+	// 3. 二级包管理器 Tab 栏（动态展示，仅当生态有 >= 2 个管理器时展开）
+	if state.show_manager_row() {
+		prefix := '${fg_accent} 管理器：${ansi_reset}'
+		mut mgr_pills := []string{}
+		mut mgr_widths := []int{}
+		for idx, mgr in state.managers {
+			count := state.mgr_counts[mgr] or { 0 }
+			disp := manager_display_name(mgr)
+			label := '${disp} · ${count}'
+			pill := if idx == state.active_mgr_idx {
+				'${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
+			} else {
+				'${fg_gray} ${label}  ${ansi_reset}'
+			}
+			mgr_pills << pill
+			mgr_widths << term.printable_len(pill)
+		}
+		mgr_line, new_mgr_off := build_scrollable_tabs(mgr_pills, mgr_widths, state.active_mgr_idx,
+			state.mgr_offset, cols, prefix, false)
+		state.mgr_offset = new_mgr_off
+		lines << pad_line_to_cols(mgr_line, cols)
+	}
+
+	// 4. 三级环境/版本 Tab 栏（动态展示，仅当选定管理器下有 >= 2 个具体环境时展开）
+	if state.show_scope_row() {
+		cur_eco := state.ecosystems[state.active_eco_idx]
+		prefix_str := if cur_eco == 'python' {
+			' 环境：'
+		} else if cur_eco == 'node' {
+			' 版本：'
+		} else if cur_eco == 'go' {
+			' 范围：'
+		} else {
+			' 环境/版本：'
+		}
 		prefix := '${fg_yellow}${prefix_str}${ansi_reset}'
-		mut sub_pills := []string{}
-		mut sub_widths := []int{}
-		for idx, s in state.subtabs {
-			count := state.subtab_counts[s] or { 0 }
-			disp_sub := subtab_display_name(cur_tab, s)
-			label := '${disp_sub} · ${count}'
-			pill := if idx == state.active_subtab_idx {
+		mut sc_pills := []string{}
+		mut sc_widths := []int{}
+		for idx, sc in state.scopes {
+			count := state.scope_counts[sc] or { 0 }
+			disp := subtab_display_name(cur_eco, sc)
+			label := '${disp} · ${count}'
+			pill := if idx == state.active_scope_idx {
 				'${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} '
 			} else {
 				'${fg_gray} ${label}  ${ansi_reset}'
 			}
-			sub_pills << pill
-			sub_widths << term.printable_len(pill)
+			sc_pills << pill
+			sc_widths << term.printable_len(pill)
 		}
-		built_sub, new_sub_off := build_scrollable_tabs(sub_pills, sub_widths, state.active_subtab_idx, state.subtab_offset, cols, prefix, true)
-		state.subtab_offset = new_sub_off
-		sub_line = built_sub
-	} else {
-		sub_line = ' ${fg_dark}(该来源无二级分类)${ansi_reset}'
-		state.subtab_offset = 0
+		sc_line, new_sc_off := build_scrollable_tabs(sc_pills, sc_widths, state.active_scope_idx,
+			state.scope_offset, cols, prefix, true)
+		state.scope_offset = new_sc_off
+		lines << pad_line_to_cols(sc_line, cols)
 	}
-	lines << pad_line_to_cols(sub_line, cols)
 
-	// 4. 搜索行
+	// 5. 搜索行
 	mut search_line := strings.new_builder(128)
 	if state.searching {
 		search_line.write_string(' ${fg_yellow}${ansi_bold}[/ 搜索] ❯ ${state.filter_text}_${ansi_reset}  ${fg_gray}(按 Enter/Esc 完成)${ansi_reset}')
@@ -409,12 +493,12 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 	}
 	lines << pad_line_to_cols(search_line.str(), cols)
 
-	// 5. Nushell 风格表格顶边、表头与中分线
+	// 6. Nushell 风格表格顶边、表头与中分线
 	lines << render_nushell_border_top(specs)
 	lines << render_nushell_header(specs)
 	lines << render_nushell_border_mid(specs)
 
-	// 6. 数据行渲染（严格截取当前页条目，并以空行对齐保持总高恒定）
+	// 7. 数据行渲染（严格截取当前页条目，并以空行对齐保持总高恒定）
 	items := state.visible_entries
 	page_start := state.page_start()
 	page_end := state.page_end()
@@ -437,18 +521,25 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 		}
 	}
 
-	// 7. 底边
+	// 8. 底边
 	lines << render_nushell_border_bottom(specs)
 
-	// 8. 底栏按键提示与分页状态
-	left_str := ' ${fg_accent}[Tab]${ansi_reset} 来源 ' +
-		'${fg_accent}[←/→]${ansi_reset} 环境 ' +
-		'${fg_accent}[↑/↓]${ansi_reset} 移动 ' +
-		'${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页 ' +
-		'${fg_accent}[Enter]${ansi_reset} 详情 ' +
-		'${fg_accent}[/]${ansi_reset} 搜索 ' +
-		'${fg_accent}[q]${ansi_reset} 退出'
+	// 9. 底栏按键提示与分页状态（根据当前展开的层级动态展示对应快捷键）
+	mut shortcuts := []string{}
+	shortcuts << '${fg_accent}[Tab]${ansi_reset} 生态'
+	if state.show_manager_row() {
+		shortcuts << '${fg_accent}[[]/[]]${ansi_reset} 管理器'
+	}
+	if state.show_scope_row() {
+		shortcuts << '${fg_accent}[←/→]${ansi_reset} 环境'
+	}
+	shortcuts << '${fg_accent}[↑/↓]${ansi_reset} 移动'
+	shortcuts << '${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页'
+	shortcuts << '${fg_accent}[Enter]${ansi_reset} 详情'
+	shortcuts << '${fg_accent}[/]${ansi_reset} 搜索'
+	shortcuts << '${fg_accent}[q]${ansi_reset} 退出'
 
+	left_str := ' ' + shortcuts.join(' ')
 	cur_p := state.current_page() + 1
 	tot_p := state.total_pages()
 	stat_msg := '第 ${cur_p}/${tot_p} 页 · ${page_size}条/屏 · 共 ${items.len} 条'
@@ -470,7 +561,7 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 	}
 	lines << pad_line_to_cols(foot_line, cols)
 
-	// 9. 组装整屏内容并严格保证行数不超过 rows
+	// 10. 组装整屏内容并严格保证行数不超过 rows
 	max_lines := if rows > 0 { rows } else { lines.len }
 	display_lines := if lines.len > max_lines { lines[..max_lines] } else { lines }
 
@@ -486,7 +577,7 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 		}
 	}
 
-	// 10. 详情浮层（居中覆盖）
+	// 11. 详情浮层（居中覆盖）
 	if state.show_detail && items.len > 0 && state.cursor_idx < items.len {
 		cur_entry := items[state.cursor_idx]
 		sb.write_string(render_modal(cur_entry, cols, rows))
@@ -550,8 +641,9 @@ fn render_nushell_row(e model.Entry, specs []TableColSpec, is_sel bool) string {
 	cursor_prefix := if is_sel { '${fg_accent}❯ ' } else { '  ' }
 
 	name_col := cursor_prefix + pad_or_truncate(e.name, specs[0].width - 2)
-	src_color := source_color(e.source)
-	src_col := '${src_color}' + pad_or_truncate(e.source, specs[1].width)
+	src_color := ecosystem_color(e.ecosystem)
+	src_text := format_source_label(e.ecosystem, e.manager)
+	src_col := '${src_color}' + pad_or_truncate(src_text, specs[1].width)
 	scope_col := pad_or_truncate(e.scope, specs[2].width)
 	ver_col := pad_or_truncate(if e.version.len > 0 { e.version } else { '—' }, specs[3].width)
 	inst_col := pad_or_truncate(e.installed_at, specs[4].width)
@@ -562,7 +654,7 @@ fn render_nushell_row(e model.Entry, specs []TableColSpec, is_sel bool) string {
 	vals := [name_col, src_col, scope_col, ver_col, inst_col, desc_col]
 
 	sb.write_string('${fg_border}│${ansi_reset}')
-	for i, val in vals {
+	for val in vals {
 		sb.write_string('${bg} ${val}${ansi_reset}${bg} ${ansi_reset}${fg_border}│${ansi_reset}')
 	}
 	return sb.str()
@@ -583,7 +675,7 @@ fn render_nushell_empty_row(specs []TableColSpec) string {
 fn render_modal(e model.Entry, cols int, rows int) string {
 	modal_w := if cols > 70 { 68 } else { cols - 4 }
 	content_w := modal_w - 4
-	modal_h := 14
+	modal_h := 16
 
 	start_y := if rows > modal_h { (rows - modal_h) / 2 } else { 2 }
 	start_x := if cols > modal_w { (cols - modal_w) / 2 } else { 2 }
@@ -608,8 +700,10 @@ fn render_modal(e model.Entry, cols int, rows int) string {
 	// 属性行
 	lines := [
 		'命令名称:   ${e.name}',
-		'归属来源:   ${e.source} (${e.origin})',
-		'二级分类:   ${if e.scope.len > 0 { e.scope } else { '—' }}',
+		'所属生态:   ${e.ecosystem} (${ecosystem_display_name(e.ecosystem)})',
+		'包管理器:   ${e.manager}',
+		'环境版本:   ${if e.scope.len > 0 { e.scope } else { '—' }}',
+		'溯源详情:   ${e.origin}',
 		'版本编号:   ${if e.version.len > 0 { e.version } else { '—' }}',
 		'安装时间:   ${if e.installed_at.len > 0 { e.installed_at } else { '—' }}',
 		'真实路径:   ${e.realpath}',

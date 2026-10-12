@@ -20,6 +20,7 @@ pub fn commands() []Command {
 	return [
 		Command{ name: 'update', usage: 'update [--deep]', description: '重建索引（deep 探测 M4 提供）' },
 		Command{ name: 'list', usage: 'list [--source S] [--scope E]', description: '列出已索引命令（默认读缓存）' },
+		Command{ name: 'search', usage: 'search [options] <query...>', description: '智能检索命令（支持多词与环境切换提示）' },
 		Command{ name: 'version', usage: 'version', description: '打印版本信息。' },
 		Command{ name: 'help', usage: 'help', description: '显示帮助。' },
 	]
@@ -31,7 +32,7 @@ pub fn usage() string {
 	sb.writeln('Usage: cmds [options] <command> [args]')
 	sb.writeln('\nCommands:')
 	for c in commands() {
-		sb.writeln('  ${pad(c.usage, 28)}${c.description}')
+		sb.writeln('  ${pad(c.usage, 32)}${c.description}')
 	}
 	sb.writeln('\n先运行 cmds update 建立索引。')
 	return sb.str()
@@ -54,6 +55,7 @@ pub fn run(ctx Context, args []string) ! {
 	match args[0] {
 		'update' { update_cmd(ctx, args[1..])! }
 		'list' { list_cmd(ctx, args[1..])! }
+		'search' { search_cmd(ctx, args[1..])! }
 		'version' { version_cmd(ctx)! }
 		'help' { println(usage()) }
 		else {

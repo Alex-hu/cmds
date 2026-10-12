@@ -27,16 +27,21 @@ fn cellar_pkg(realpath string) string {
 	return rest.split('/')[0]
 }
 
-// scope_version 从 scope（如 'fnm/v22.12.0'）提取版本号：取末段并去掉前导 'v'；无 '/' 返回空。
+// scope_version 从 scope（如 'v22.12.0' 或 'fnm/v22.12.0'）提取版本号：取末段并去掉前导 'v'；无有效数字版本返回空。
 fn scope_version(scope string) string {
-	if !scope.contains('/') {
+	ver := if scope.contains('/') { scope.all_after_last('/') } else { scope }
+	if ver == 'brew' || ver == 'system' || ver == '' {
 		return ''
 	}
-	ver := scope.all_after_last('/')
 	if ver.len > 0 && ver[0] == `v` {
 		return ver[1..]
 	}
-	return ver
+	for ch in ver {
+		if ch.is_digit() {
+			return ver
+		}
+	}
+	return ''
 }
 
 // ---------- BrewSource：Homebrew ----------
@@ -90,12 +95,17 @@ pub fn new_brew_source() BrewSource {
 	return BrewSource{ prefixes: prefixes }
 }
 
+// ecosystem 实现 Source 接口：一级生态 'brew'。
+pub fn (s BrewSource) ecosystem() string {
+	return 'brew'
+}
+
 // id 实现 Source 接口：源标识 'brew'。
 pub fn (s BrewSource) id() string {
 	return 'brew'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s BrewSource) label() string {
 	return 'Homebrew'
 }
@@ -120,12 +130,18 @@ pub fn (s BrewSource) roots() []string {
 // attribute 实现 Source 接口：realpath 位于任一 Cellar 下即归因 brew（无二级 scope）。
 pub fn (s BrewSource) attribute(realpath string) ?Attribution {
 	if realpath.contains('/Cellar/') {
-		return Attribution{ source: 'brew', origin: 'brew', scope: '' }
+		return Attribution{
+			source_id: 'brew'
+			ecosystem: 'brew'
+			manager:   'brew'
+			origin:    'brew'
+			scope:     ''
+		}
 	}
 	return none
 }
 
-// scopes 实现 Source 接口：brew 无二级分类，返回空。
+// scopes 实现 Source 接口：brew 无三级分类，返回空。
 pub fn (s BrewSource) scopes() []Scope {
 	return []Scope{}
 }
@@ -167,7 +183,7 @@ pub fn (s BrewSource) enrich(mut entries []model.Entry) ! {
 		}
 	}
 	for mut e in entries {
-		if e.source != 'brew' {
+		if e.source_id != 'brew' {
 			continue
 		}
 		pkg := cellar_pkg(e.realpath)
@@ -236,7 +252,7 @@ pub fn new_npm_source() NpmSource {
 			for ver in os.ls(pkg_dir) or { []string{} } {
 				root := os.join_path(pkg_dir, ver)
 				if os.is_dir(root) {
-					installs << make_install(root, 'brew', 'brew')
+					installs << make_install(root, 'brew', ver)
 				}
 			}
 		}
@@ -247,7 +263,7 @@ pub fn new_npm_source() NpmSource {
 		for d in os.ls(fnm_root) or { []string{} } {
 			root := os.join_path(fnm_root, d, 'installation')
 			if os.is_dir(root) {
-				installs << make_install(root, 'fnm', 'fnm/' + d)
+				installs << make_install(root, 'fnm', d)
 			}
 		}
 	}
@@ -257,7 +273,7 @@ pub fn new_npm_source() NpmSource {
 		for d in os.ls(nvm_root) or { []string{} } {
 			root := os.join_path(nvm_root, d)
 			if os.is_dir(root) {
-				installs << make_install(root, 'nvm', 'nvm/' + d)
+				installs << make_install(root, 'nvm', d)
 			}
 		}
 	}
@@ -268,10 +284,15 @@ pub fn new_npm_source() NpmSource {
 			bin_dir:       '/usr/local/bin'
 			modules_dir:   legacy_modules
 			origin_prefix: 'legacy'
-			scope:         'usr/local'
+			scope:         'system'
 		}
 	}
 	return NpmSource{ installs: installs }
+}
+
+// ecosystem 实现 Source 接口：一级生态 'node'。
+pub fn (s NpmSource) ecosystem() string {
+	return 'node'
 }
 
 // id 实现 Source 接口：源标识 'npm'。
@@ -279,7 +300,7 @@ pub fn (s NpmSource) id() string {
 	return 'npm'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s NpmSource) label() string {
 	return 'npm'
 }
@@ -302,21 +323,43 @@ pub fn (s NpmSource) roots() []string {
 }
 
 // attribute 实现 Source 接口：
-//   - 位于某安装的 node_modules 下 → {'npm', 'npm@<scope>', <scope>}；
-//   - 位于某安装的 bin 下（且不经 node_modules，即 node 本体）→ {'npm', 'node@<scope>', <scope>}。
+//   - 位于某安装的 node_modules 下 → {'npm', 'node', <manager>, <scope>, 'npm@<scope>'}；
+//   - 位于某安装的 bin 下（且不经 node_modules，即 node 本体）→ {'npm', 'node', <manager>, <scope>, 'node@<scope>'}。
 //     本体判定限定 node 系二进制名：legacy 安装的 bin_dir 是 /usr/local/bin 这类共享目录，
 //     不能把同目录的无关真实文件吞进来。
 pub fn (s NpmSource) attribute(realpath string) ?Attribution {
 	// 先判包（node_modules），再判 node 本体（bin 且不经 node_modules）
 	for inst in s.installs {
 		if under_dir(realpath, inst.modules_dir) {
-			return Attribution{ source: 'npm', origin: 'npm@' + inst.scope, scope: inst.scope }
+			orig_scope := if inst.scope.starts_with(inst.origin_prefix + '/') {
+				inst.scope
+			} else {
+				'${inst.origin_prefix}/${inst.scope}'
+			}
+			return Attribution{
+				source_id: 'npm'
+				ecosystem: 'node'
+				manager:   inst.origin_prefix
+				scope:     inst.scope
+				origin:    'npm@${orig_scope}'
+			}
 		}
 	}
 	for inst in s.installs {
 		if under_dir(realpath, inst.bin_dir) && !realpath.contains('/node_modules/')
 			&& is_node_bin(os.base(realpath)) {
-			return Attribution{ source: 'npm', origin: 'node@' + inst.scope, scope: inst.scope }
+			orig_scope := if inst.scope.starts_with(inst.origin_prefix + '/') {
+				inst.scope
+			} else {
+				'${inst.origin_prefix}/${inst.scope}'
+			}
+			return Attribution{
+				source_id: 'npm'
+				ecosystem: 'node'
+				manager:   inst.origin_prefix
+				scope:     inst.scope
+				origin:    'node@${orig_scope}'
+			}
 		}
 	}
 	return none
@@ -356,7 +399,7 @@ struct PkgJson {
 // 单个 package.json 缺失/损坏只跳过该条，不失败。
 pub fn (s NpmSource) enrich(mut entries []model.Entry) ! {
 	for mut e in entries {
-		if e.source != 'npm' {
+		if e.source_id != 'npm' {
 			continue
 		}
 		if e.origin.starts_with('node@') {
@@ -401,7 +444,8 @@ pub fn (s NpmSource) enrich(mut entries []model.Entry) ! {
 pub struct CondaEnv {
 pub mut:
 	bin_dir string // 环境 bin 目录绝对路径
-	scope   string // 二级分类键：'<安装名>/base'、'<安装名>/envs/<env>'
+	manager string // 包管理器名称：'anaconda3'、'miniforge3'、'miniconda3'
+	scope   string // 三级环境名：'base'、<env>
 }
 
 // CondaSource 覆盖 ~/anaconda3、~/miniforge3、~/miniconda3 的 base 与各环境。
@@ -419,7 +463,11 @@ pub fn new_conda_source() CondaSource {
 		if !os.is_dir(root) {
 			continue
 		}
-		envs << CondaEnv{ bin_dir: os.join_path(root, 'bin'), scope: name + '/base' }
+		envs << CondaEnv{
+			bin_dir: os.join_path(root, 'bin')
+			manager: name
+			scope:   'base'
+		}
 		envs_root := os.join_path(root, 'envs')
 		if !os.is_dir(envs_root) {
 			continue
@@ -427,11 +475,22 @@ pub fn new_conda_source() CondaSource {
 		for env in os.ls(envs_root) or { []string{} } {
 			bin_dir := os.join_path(envs_root, env, 'bin')
 			if os.is_dir(bin_dir) {
-				envs << CondaEnv{ bin_dir: bin_dir, scope: name + '/envs/' + env }
+				envs << CondaEnv{
+					bin_dir: bin_dir
+					manager: name
+					scope:   env
+				}
 			}
 		}
 	}
-	return CondaSource{ envs: envs }
+	return CondaSource{
+		envs: envs
+	}
+}
+
+// ecosystem 实现 Source 接口：一级生态 'python'。
+pub fn (s CondaSource) ecosystem() string {
+	return 'python'
 }
 
 // id 实现 Source 接口：源标识 'conda'。
@@ -439,7 +498,7 @@ pub fn (s CondaSource) id() string {
 	return 'conda'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s CondaSource) label() string {
 	return 'conda'
 }
@@ -460,22 +519,33 @@ pub fn (s CondaSource) roots() []string {
 	return out
 }
 
-// attribute 实现 Source 接口：位于某环境 bin 目录下 → {'conda', 'conda:<scope>', <scope>}。
+// attribute 实现 Source 接口：位于某环境 bin 目录下 → {'conda', 'python', <manager>, <scope>, '<manager>:<scope>'}。
 pub fn (s CondaSource) attribute(realpath string) ?Attribution {
 	for env in s.envs {
 		if under_dir(realpath, env.bin_dir) {
-			return Attribution{ source: 'conda', origin: 'conda:' + env.scope, scope: env.scope }
+			return Attribution{
+				source_id: 'conda'
+				ecosystem: 'python'
+				manager:   env.manager
+				scope:     env.scope
+				origin:    '${env.manager}:${env.scope}'
+			}
 		}
 	}
 	return none
 }
 
-// scopes 实现 Source 接口：全部环境（base + envs/*）。
+// scopes 实现 Source 接口：全部环境（去重后）。
 pub fn (s CondaSource) scopes() []Scope {
 	mut out := []Scope{cap: s.envs.len}
+	mut seen := map[string]bool{}
 	for env in s.envs {
-		if env.scope != '' {
-			out << Scope{ id: env.scope, label: env.scope }
+		if env.scope != '' && !seen[env.scope] {
+			seen[env.scope] = true
+			out << Scope{
+				id:    env.scope
+				label: env.scope
+			}
 		}
 	}
 	return out
@@ -515,12 +585,15 @@ pub fn (s CondaSource) enrich(mut entries []model.Entry) ! {
 			meta := json2.decode[CondaMeta](content) or { continue }
 			for f in meta.files {
 				if f.starts_with('bin/') && !f[4..].contains('/') {
-					by_bin[f[4..]] = CondaPkgInfo{ version: meta.version, meta_path: meta_path }
+					by_bin[f[4..]] = CondaPkgInfo{
+						version:   meta.version
+						meta_path: meta_path
+					}
 				}
 			}
 		}
 		for mut e in entries {
-			if e.source != 'conda' || !under_dir(e.realpath, env.bin_dir) {
+			if e.source_id != 'conda' || !under_dir(e.realpath, env.bin_dir) {
 				continue
 			}
 			base := os.file_name(e.realpath)
@@ -530,6 +603,153 @@ pub fn (s CondaSource) enrich(mut entries []model.Entry) ! {
 					e.installed_at = fmt_ts(st.mtime)
 				}
 			}
+		}
+	}
+}
+
+// ---------- UvSource：Python uv 包管理器 ----------
+
+// UvSource 负责发现 ~/.local/share/uv 中的工具与 Python 解释器。
+pub struct UvSource {
+pub mut:
+	tools_dir  string
+	python_dir string
+	local_bin  string
+}
+
+// new_uv_source 初始化 UvSource。
+pub fn new_uv_source() UvSource {
+	home := os.home_dir()
+	return UvSource{
+		tools_dir:  os.join_path(home, '.local', 'share', 'uv', 'tools')
+		python_dir: os.join_path(home, '.local', 'share', 'uv', 'python')
+		local_bin:  os.join_path(home, '.local', 'bin')
+	}
+}
+
+// ecosystem 实现 Source 接口：一级生态 'python'。
+pub fn (s UvSource) ecosystem() string {
+	return 'python'
+}
+
+// id 实现 Source 接口：源标识 'uv'。
+pub fn (s UvSource) id() string {
+	return 'uv'
+}
+
+// label 实现 Source 接口：展示名。
+pub fn (s UvSource) label() string {
+	return 'uv'
+}
+
+// priority 实现 Source 接口：归因轮询顺序 25（优先于 conda 与 manual）。
+pub fn (s UvSource) priority() int {
+	return 25
+}
+
+// roots 实现 Source 接口：uv 工具入口位于 ~/.local/bin，已由 manual/PATH 统一扫描，此处返回空防重复。
+pub fn (s UvSource) roots() []string {
+	return []string{}
+}
+
+// attribute 实现 Source 接口：realpath 位于 uv tools/python 或 uv/uvx 二进制。
+pub fn (s UvSource) attribute(realpath string) ?Attribution {
+	if s.tools_dir != '' && under_dir(realpath, s.tools_dir) {
+		rel := realpath.all_after(s.tools_dir).trim_left(os.path_separator)
+		tool_name := rel.all_before(os.path_separator)
+		return Attribution{
+			source_id: 'uv'
+			ecosystem: 'python'
+			manager:   'uv'
+			scope:     'tools'
+			origin:    'uv:tool/' + tool_name
+		}
+	}
+	if s.python_dir != '' && under_dir(realpath, s.python_dir) {
+		return Attribution{
+			source_id: 'uv'
+			ecosystem: 'python'
+			manager:   'uv'
+			scope:     'toolchain'
+			origin:    'uv:python'
+		}
+	}
+	base := os.file_name(realpath)
+	if base in ['uv', 'uvx'] && under_dir(realpath, s.local_bin) {
+		return Attribution{
+			source_id: 'uv'
+			ecosystem: 'python'
+			manager:   'uv'
+			scope:     'tools'
+			origin:    'uv:self'
+		}
+	}
+	return none
+}
+
+// scopes 实现 Source 接口：uv 提供 tools 与 toolchain。
+pub fn (s UvSource) scopes() []Scope {
+	return [
+		Scope{
+			id:    'tools'
+			label: '工具'
+		},
+		Scope{
+			id:    'toolchain'
+			label: '工具链'
+		},
+	]
+}
+
+// enrich 实现 Source 接口：通过 `uv tool list` 与 `uv --version` 富化版本信息。
+pub fn (s UvSource) enrich(mut entries []model.Entry) ! {
+	mut versions := map[string]string{}
+	res := os.exec(['uv', 'tool', 'list'])
+	if res.exit_code == 0 && res.output != '' {
+		mut cur_ver := ''
+		for line in res.output.split_into_lines() {
+			trimmed := line.trim_space()
+			if trimmed.starts_with('- ') {
+				bin_name := trimmed[2..].trim_space()
+				if cur_ver != '' {
+					versions[bin_name] = cur_ver
+				}
+			} else if trimmed.contains(' v') {
+				parts := trimmed.split(' ')
+				for p in parts {
+					if p.starts_with('v') && p.len > 1 {
+						cur_ver = p[1..]
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// uv 自驱版本
+	uv_res := os.exec(['uv', '--version'])
+	if uv_res.exit_code == 0 && uv_res.output != '' {
+		parts := uv_res.output.trim_space().split(' ')
+		if parts.len >= 2 {
+			versions['uv'] = parts[1]
+			versions['uvx'] = parts[1]
+		}
+	}
+
+	for mut e in entries {
+		if e.source_id != 'uv' {
+			continue
+		}
+		if v := versions[e.name] {
+			e.version = v
+		}
+		if st := os.stat(e.realpath) {
+			e.installed_at = fmt_ts(st.mtime)
+		}
+		if e.name == 'uv' {
+			e.description = 'Extremely fast Python package installer and resolver'
+		} else if e.name == 'uvx' {
+			e.description = 'Execute tools from Python packages in ephemeral environments'
 		}
 	}
 }
@@ -564,12 +784,17 @@ pub fn new_cargo_source() CargoSource {
 	return s
 }
 
+// ecosystem 实现 Source 接口：一级生态 'rust'。
+pub fn (s CargoSource) ecosystem() string {
+	return 'rust'
+}
+
 // id 实现 Source 接口：源标识 'cargo'。
 pub fn (s CargoSource) id() string {
 	return 'cargo'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s CargoSource) label() string {
 	return 'cargo'
 }
@@ -587,15 +812,21 @@ pub fn (s CargoSource) roots() []string {
 	return []string{}
 }
 
-// attribute 实现 Source 接口：位于 ~/.cargo/bin 下 → {'cargo', 'cargo', ''}。
+// attribute 实现 Source 接口：位于 ~/.cargo/bin 下 → {'cargo', 'rust', 'cargo', '', 'cargo'}。
 pub fn (s CargoSource) attribute(realpath string) ?Attribution {
 	if under_dir(realpath, s.root) {
-		return Attribution{ source: 'cargo', origin: 'cargo', scope: '' }
+		return Attribution{
+			source_id: 'cargo'
+			ecosystem: 'rust'
+			manager:   'cargo'
+			origin:    'cargo'
+			scope:     ''
+		}
 	}
 	return none
 }
 
-// scopes 实现 Source 接口：cargo 无二级分类，返回空。
+// scopes 实现 Source 接口：cargo 无三级分类，返回空。
 pub fn (s CargoSource) scopes() []Scope {
 	return []Scope{}
 }
@@ -622,7 +853,7 @@ pub fn (s CargoSource) enrich(mut entries []model.Entry) ! {
 		}
 	}
 	for mut e in entries {
-		if e.source != 'cargo' {
+		if e.source_id != 'cargo' {
 			continue
 		}
 		if e.name in by_bin {
@@ -712,12 +943,17 @@ pub fn new_go_source() GoSource {
 	}
 }
 
+// ecosystem 实现 Source 接口：一级生态 'go'。
+pub fn (s GoSource) ecosystem() string {
+	return 'go'
+}
+
 // id 实现 Source 接口：源标识 'go'。
 pub fn (s GoSource) id() string {
 	return 'go'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s GoSource) label() string {
 	return 'Go'
 }
@@ -738,23 +974,30 @@ pub fn (s GoSource) roots() []string {
 	return out
 }
 
-// attribute 实现 Source 接口：位于任一 Go bin 目录下 → {'go', 'go', ''}。
+// attribute 实现 Source 接口：位于任一 Go bin 目录下 → {'go', 'go', 'go', <scope>, 'go:<scope>'}。
 pub fn (s GoSource) attribute(realpath string) ?Attribution {
 	for r in s.roots {
 		if under_dir(realpath, r) {
+			is_toolchain := os.file_name(realpath) in ['go', 'gofmt'] || r.contains('/go/bin') || r.contains('libexec/bin')
+			scope_name := if is_toolchain { 'toolchain' } else { 'gopath' }
 			return Attribution{
-				source: 'go'
-				origin: 'go'
-				scope:  ''
+				source_id: 'go'
+				ecosystem: 'go'
+				manager:   'go'
+				origin:    'go:' + scope_name
+				scope:     scope_name
 			}
 		}
 	}
 	return none
 }
 
-// scopes 实现 Source 接口：go 无二级分类，返回空。
+// scopes 实现 Source 接口：go 的三级分类（标准工具链 vs GOPATH）。
 pub fn (s GoSource) scopes() []Scope {
-	return []Scope{}
+	return [
+		Scope{ id: 'toolchain', label: '标准工具链' },
+		Scope{ id: 'gopath', label: 'GOPATH' },
+	]
 }
 
 // enrich 实现 Source 接口：逐 entry 执行 `go version -m <realpath>`（不执行被索引的
@@ -772,7 +1015,7 @@ pub fn (s GoSource) enrich(mut entries []model.Entry) ! {
 		return
 	}
 	for mut e in entries {
-		if e.source != 'go' {
+		if e.source_id != 'go' {
 			continue
 		}
 		res := os.exec(['go', 'version', '-m', e.realpath])
@@ -887,12 +1130,17 @@ pub fn new_pnpm_source() PnpmSource {
 	return s
 }
 
+// ecosystem 实现 Source 接口：一级生态 'node'。
+pub fn (s PnpmSource) ecosystem() string {
+	return 'node'
+}
+
 // id 实现 Source 接口：源标识 'pnpm'。
 pub fn (s PnpmSource) id() string {
 	return 'pnpm'
 }
 
-// label 实现 Source 接口：一级 tab 展示名。
+// label 实现 Source 接口：展示名。
 pub fn (s PnpmSource) label() string {
 	return 'pnpm'
 }
@@ -910,19 +1158,21 @@ pub fn (s PnpmSource) roots() []string {
 	return []string{}
 }
 
-// attribute 实现 Source 接口：位于 $PNPM_HOME 目录下 → {'pnpm', 'pnpm', ''}。
+// attribute 实现 Source 接口：位于 $PNPM_HOME 目录下 → {'pnpm', 'node', 'pnpm', '', 'pnpm:global'}。
 pub fn (s PnpmSource) attribute(realpath string) ?Attribution {
 	if under_dir(realpath, s.root) {
 		return Attribution{
-			source: 'pnpm'
-			origin: 'pnpm'
-			scope:  ''
+			source_id: 'pnpm'
+			ecosystem: 'node'
+			manager:   'pnpm'
+			origin:    'pnpm:global'
+			scope:     ''
 		}
 	}
 	return none
 }
 
-// scopes 实现 Source 接口：pnpm 全局无二级分类，返回空。
+// scopes 实现 Source 接口：pnpm 全局无三级分类，返回空。
 pub fn (s PnpmSource) scopes() []Scope {
 	return []Scope{}
 }
@@ -959,7 +1209,7 @@ pub fn (s PnpmSource) enrich(mut entries []model.Entry) ! {
 	}
 
 	for mut e in entries {
-		if e.source != 'pnpm' {
+		if e.source_id != 'pnpm' {
 			continue
 		}
 		if st := os.stat(e.realpath) {

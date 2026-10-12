@@ -23,18 +23,23 @@ pub fn new_system_source() SystemSource {
 	return SystemSource{}
 }
 
-// id 返回源标识 'system'（一级 tab 键、Entry.source 取值）。
-fn (s SystemSource) id() string {
+// ecosystem 返回一级技术栈生态 'system'。
+pub fn (s SystemSource) ecosystem() string {
+	return 'system'
+}
+
+// id 返回源标识 'system'。
+pub fn (s SystemSource) id() string {
 	return 'system'
 }
 
 // label 返回展示名。
-fn (s SystemSource) label() string {
+pub fn (s SystemSource) label() string {
 	return '系统'
 }
 
 // roots 返回候选清单中本机实际存在的系统命令目录。
-fn (s SystemSource) roots() []string {
+pub fn (s SystemSource) roots() []string {
 	mut out := []string{}
 	for d in system_bin_dirs {
 		if os.is_dir(d) {
@@ -46,26 +51,32 @@ fn (s SystemSource) roots() []string {
 
 // attribute 判断 realpath 是否位于四个系统命令目录之下；前缀必须整目录匹配
 // （拼 '/bin/' 形式，避免 '/usr/binux' 之类误命中），不属于本源返回 none。
-fn (s SystemSource) attribute(realpath string) ?Attribution {
+pub fn (s SystemSource) attribute(realpath string) ?Attribution {
 	for d in system_bin_dirs {
 		if realpath.starts_with(d + '/') {
-			return Attribution{ source: 'system', origin: 'system', scope: '' }
+			return Attribution{
+				source_id: 'system'
+				ecosystem: 'system'
+				manager:   'system'
+				origin:    'system'
+				scope:     ''
+			}
 		}
 	}
 	return none
 }
 
 // enrich 是 no-op：系统命令无自有注册表可读，版本信息留待 M4 deep 探测。
-fn (s SystemSource) enrich(mut _ []model.Entry) ! {
+pub fn (s SystemSource) enrich(mut _ []model.Entry) ! {
 }
 
-// scopes 返回空数组：系统源无二级分类。
-fn (s SystemSource) scopes() []Scope {
+// scopes 返回空数组：系统源无三级分类。
+pub fn (s SystemSource) scopes() []Scope {
 	return []
 }
 
 // priority 返回归因轮询优先级：排在 rvm/app 等具体源之后、manual 之前。
-fn (s SystemSource) priority() int {
+pub fn (s SystemSource) priority() int {
 	return 100
 }
 
@@ -88,18 +99,23 @@ pub fn new_rvm_source() RvmSource {
 	return RvmSource{}
 }
 
+// ecosystem 返回一级技术栈生态 'ruby'。
+pub fn (s RvmSource) ecosystem() string {
+	return 'ruby'
+}
+
 // id 返回源标识 'rvm'。
-fn (s RvmSource) id() string {
+pub fn (s RvmSource) id() string {
 	return 'rvm'
 }
 
 // label 返回展示名。
-fn (s RvmSource) label() string {
+pub fn (s RvmSource) label() string {
 	return 'rvm'
 }
 
 // roots 返回 [root]；本机未安装 RVM（root 为空）时返回空数组。
-fn (s RvmSource) roots() []string {
+pub fn (s RvmSource) roots() []string {
 	if s.root == '' {
 		return []
 	}
@@ -108,24 +124,30 @@ fn (s RvmSource) roots() []string {
 
 // attribute 判断 realpath 是否位于 root 目录之下（整目录前缀 'root/'），
 // root 为空或前缀不匹配返回 none。
-fn (s RvmSource) attribute(realpath string) ?Attribution {
+pub fn (s RvmSource) attribute(realpath string) ?Attribution {
 	if s.root != '' && realpath.starts_with(s.root + '/') {
-		return Attribution{ source: 'rvm', origin: 'rvm', scope: '' }
+		return Attribution{
+			source_id: 'rvm'
+			ecosystem: 'ruby'
+			manager:   'rvm'
+			origin:    'rvm'
+			scope:     ''
+		}
 	}
 	return none
 }
 
 // enrich 是 no-op：版本信息留待 M4 deep 探测。
-fn (s RvmSource) enrich(mut _ []model.Entry) ! {
+pub fn (s RvmSource) enrich(mut _ []model.Entry) ! {
 }
 
-// scopes 返回空数组：RVM 源无二级分类。
-fn (s RvmSource) scopes() []Scope {
+// scopes 返回空数组：RVM 源无三级分类。
+pub fn (s RvmSource) scopes() []Scope {
 	return []
 }
 
 // priority 返回归因轮询优先级：RVM 是具体源，先于 app/system/manual。
-fn (s RvmSource) priority() int {
+pub fn (s RvmSource) priority() int {
 	return 60
 }
 
@@ -163,18 +185,23 @@ pub fn new_app_source_auto() AppSource {
 	return new_app_source(os.getenv('PATH'))
 }
 
+// ecosystem 返回一级技术栈生态 'app'。
+pub fn (s AppSource) ecosystem() string {
+	return 'app'
+}
+
 // id 返回源标识 'app'。
-fn (s AppSource) id() string {
+pub fn (s AppSource) id() string {
 	return 'app'
 }
 
 // label 返回展示名。
-fn (s AppSource) label() string {
+pub fn (s AppSource) label() string {
 	return 'app'
 }
 
 // roots 返回收集到的 .app bundle 内目录。
-fn (s AppSource) roots() []string {
+pub fn (s AppSource) roots() []string {
 	return s.app_dirs
 }
 
@@ -182,7 +209,7 @@ fn (s AppSource) roots() []string {
 // 即命中，origin 取紧邻 Contents 之前、以 '.app' 结尾的那段路径的 bundle 名
 // （去掉 '.app' 后缀），例: '/Applications/Fake.app/Contents/MacOS/tools/x'
 // → origin 'app:Fake'。不含该形状返回 none。
-fn (s AppSource) attribute(realpath string) ?Attribution {
+pub fn (s AppSource) attribute(realpath string) ?Attribution {
 	if !realpath.contains('.app/Contents/') {
 		return none
 	}
@@ -198,20 +225,26 @@ fn (s AppSource) attribute(realpath string) ?Attribution {
 		return none
 	}
 	name := bundle[..bundle.len - 4] // 去掉 '.app' 后缀（4 字符）
-	return Attribution{ source: 'app', origin: 'app:' + name, scope: '' }
+	return Attribution{
+		source_id: 'app'
+		ecosystem: 'app'
+		manager:   'app'
+		origin:    'app:' + name
+		scope:     ''
+	}
 }
 
 // enrich 是 no-op：版本信息留待 M4 deep 探测。
-fn (s AppSource) enrich(mut _ []model.Entry) ! {
+pub fn (s AppSource) enrich(mut _ []model.Entry) ! {
 }
 
-// scopes 返回空数组：app 源无二级分类。
-fn (s AppSource) scopes() []Scope {
+// scopes 返回空数组：app 源无三级分类。
+pub fn (s AppSource) scopes() []Scope {
 	return []
 }
 
 // priority 返回归因轮询优先级：app 是具体源，先于 system/manual。
-fn (s AppSource) priority() int {
+pub fn (s AppSource) priority() int {
 	return 70
 }
 
@@ -260,37 +293,42 @@ pub fn new_manual_source_auto(taken []string) ManualSource {
 	return new_manual_source(os.getenv('PATH'), taken)
 }
 
+// ecosystem 返回一级技术栈生态 'manual'。
+pub fn (m ManualSource) ecosystem() string {
+	return 'manual'
+}
+
 // id 返回源标识 'manual'。
-fn (m ManualSource) id() string {
+pub fn (m ManualSource) id() string {
 	return 'manual'
 }
 
 // label 返回展示名。
-fn (m ManualSource) label() string {
+pub fn (m ManualSource) label() string {
 	return 'manual'
 }
 
 // roots 返回过滤后的兜底目录。
-fn (m ManualSource) roots() []string {
+pub fn (m ManualSource) roots() []string {
 	return m.root_dirs
 }
 
 // attribute 永远返回 none：兜底归因由 update 管道在全部源轮询结束后统一处理，
 // 本源不参与轮询竞争（否则 priority 999 的兜底源永远轮不到）。
-fn (m ManualSource) attribute(_ string) ?Attribution {
+pub fn (m ManualSource) attribute(_ string) ?Attribution {
 	return none
 }
 
 // enrich 是 no-op：版本信息留待 M4 deep 探测。
-fn (m ManualSource) enrich(mut _ []model.Entry) ! {
+pub fn (m ManualSource) enrich(mut _ []model.Entry) ! {
 }
 
-// scopes 返回空数组：兜底源无二级分类。
-fn (m ManualSource) scopes() []Scope {
+// scopes 返回空数组：兜底源无三级分类。
+pub fn (m ManualSource) scopes() []Scope {
 	return []
 }
 
 // priority 返回归因轮询优先级：999，排在所有具体源之后，兜底。
-fn (m ManualSource) priority() int {
+pub fn (m ManualSource) priority() int {
 	return 999
 }

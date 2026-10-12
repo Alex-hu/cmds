@@ -8,6 +8,7 @@ pub fn all_sources() []Source {
 	srcs << new_pnpm_source()
 	srcs << new_brew_source()
 	srcs << new_conda_source()
+	srcs << new_uv_source()
 	srcs << new_cargo_source()
 	srcs << new_go_source()
 	srcs << new_rvm_source()

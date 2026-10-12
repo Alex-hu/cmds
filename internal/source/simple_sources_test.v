@@ -31,12 +31,21 @@ fn make_exec(dir string, name string) !string {
 
 fn test_system_source_meta() {
 	s := new_system_source()
+	assert s.ecosystem() == 'system'
 	assert s.id() == 'system'
 	assert s.label() == '系统'
 	assert s.priority() == 100
 	assert s.scopes().len == 0
 	// enrich 是 no-op：条目原样返回
-	mut entries := [model.Entry{ name: 'ls', source: 'system', realpath: '/bin/ls' }]
+	mut entries := [
+		model.Entry{
+			name:      'ls'
+			source_id: 'system'
+			ecosystem: 'system'
+			manager:   'system'
+			realpath:  '/bin/ls'
+		},
+	]
 	s.enrich(mut entries) or { assert false }
 	assert entries.len == 1
 	assert entries[0].name == 'ls'
@@ -55,18 +64,21 @@ fn test_system_source_roots() {
 
 fn test_system_source_attribute_hit() {
 	s := new_system_source()
-	// 规格:/usr/bin/ls → Attribution{'system','system',''}
+	// 规格:/usr/bin/ls → Attribution{'system','system','system','system',''}
 	if a := s.attribute('/usr/bin/ls') {
-		assert a.source == 'system'
+		assert a.source_id == 'system'
+		assert a.ecosystem == 'system'
+		assert a.manager == 'system'
 		assert a.origin == 'system'
-		assert a.scope == '' // 空串=无二级分类
+		assert a.scope == '' // 空串=无三级分类
 	} else {
 		assert false
 	}
 	// 四个候选目录的前缀都应命中（attribute 不依赖目录当前是否存在）
 	for d in system_bin_dirs {
 		if a := s.attribute(d + '/ls') {
-			assert a.source == 'system'
+			assert a.ecosystem == 'system'
+			assert a.manager == 'system'
 		} else {
 			assert false
 		}
@@ -111,13 +123,16 @@ fn test_rvm_source_fixture_root() ! {
 	assert exe != ''
 
 	s := RvmSource{ root: rvm_bin }
+	assert s.ecosystem() == 'ruby'
 	assert s.id() == 'rvm'
 	assert s.label() == 'rvm'
 	assert s.priority() == 60
 	assert s.scopes().len == 0
 	assert s.roots() == [rvm_bin]
 	if a := s.attribute(os.join_path(rvm_bin, 'ruby')) {
-		assert a.source == 'rvm'
+		assert a.source_id == 'rvm'
+		assert a.ecosystem == 'ruby'
+		assert a.manager == 'rvm'
 		assert a.origin == 'rvm'
 		assert a.scope == ''
 	} else {
@@ -132,7 +147,14 @@ fn test_rvm_source_fixture_root() ! {
 		assert false
 	}
 	// enrich 是 no-op
-	mut entries := [model.Entry{ name: 'ruby', source: 'rvm' }]
+	mut entries := [
+		model.Entry{
+			name:      'ruby'
+			source_id: 'rvm'
+			ecosystem: 'ruby'
+			manager:   'rvm'
+		},
+	]
 	s.enrich(mut entries) or { assert false }
 	assert entries.len == 1
 }
@@ -183,6 +205,7 @@ fn test_app_source_from_path_env() ! {
 		os.join_path(base, 'NotBundle', 'Contents', 'MacOS'),
 	].join(':')
 	s := new_app_source(path_env)
+	assert s.ecosystem() == 'app'
 	assert s.id() == 'app'
 	assert s.label() == 'app'
 	assert s.priority() == 70
@@ -193,14 +216,23 @@ fn test_app_source_from_path_env() ! {
 	// 归因:origin == 'app:Fake'（bundle 名去掉 .app 后缀）
 	cli := os.join_path(tools, 'fakecli')
 	if a := s.attribute(cli) {
-		assert a.source == 'app'
+		assert a.source_id == 'app'
+		assert a.ecosystem == 'app'
+		assert a.manager == 'app'
 		assert a.origin == 'app:Fake'
 		assert a.scope == ''
 	} else {
 		assert false
 	}
 	// enrich 是 no-op
-	mut entries := [model.Entry{ name: 'fakecli', source: 'app' }]
+	mut entries := [
+		model.Entry{
+			name:      'fakecli'
+			source_id: 'app'
+			ecosystem: 'app'
+			manager:   'app'
+		},
+	]
 	s.enrich(mut entries) or { assert false }
 	assert entries.len == 1
 }
@@ -209,7 +241,9 @@ fn test_app_source_attribute_bundle_shapes() {
 	s := new_app_source('')
 	// roots 为空不影响 attribute 的纯路径形状判定
 	if a := s.attribute('/Applications/Fake.app/Contents/MacOS/tools/fakecli') {
-		assert a.source == 'app'
+		assert a.source_id == 'app'
+		assert a.ecosystem == 'app'
+		assert a.manager == 'app'
 		assert a.origin == 'app:Fake'
 	} else {
 		assert false
@@ -304,7 +338,14 @@ fn test_manual_source_attribute_always_none() ! {
 		assert false
 	}
 	// enrich 是 no-op
-	mut entries := [model.Entry{ name: 'tool', source: 'manual' }]
+	mut entries := [
+		model.Entry{
+			name:      'tool'
+			source_id: 'manual'
+			ecosystem: 'manual'
+			manager:   'manual'
+		},
+	]
 	m.enrich(mut entries) or { assert false }
 	assert entries.len == 1
 }
@@ -326,6 +367,11 @@ fn test_interface_conformance() {
 	assert ids.contains('rvm')
 	assert ids.contains('app')
 	assert ids.contains('manual')
+	ecos := srcs.map(it.ecosystem())
+	assert ecos.contains('system')
+	assert ecos.contains('ruby')
+	assert ecos.contains('app')
+	assert ecos.contains('manual')
 	labels := srcs.map(it.label())
 	assert labels.contains('系统')
 	// enrich/scopes 经接口调用也是 no-op/空

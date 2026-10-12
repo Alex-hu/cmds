@@ -35,7 +35,9 @@ vet:
 
 # 清理产物与编译临时目录
 clean:
-	rm -rf cmds .*.v3cc.*
+	@echo "清理二进制产物与编译临时文件..."
+	@rm -rf cmds
+	@find . -maxdepth 1 \( -name ".*v3*" -o -name "..v3*" \) -exec rm -rf {} + 2>/dev/null || true
 
 help:
 	@echo "可用指令:"

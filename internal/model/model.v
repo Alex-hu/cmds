@@ -4,9 +4,11 @@ module model
 pub struct Entry {
 pub mut:
 	name         string
-	source       string // system|brew|npm|conda|cargo|go|rvm|app|manual
-	origin       string // 例: conda:miniforge3/envs/ml / npm@fnm/v22.12.0
-	scope        string // 二级分类键（conda 环境、node 版本标识）；空串=无
+	source_id    string // 负责发现与富化该条目的 Source 插件 id (如 'npm', 'pnpm', 'conda')
+	ecosystem    string // 一级技术栈 (node|python|go|rust|brew|system|app|manual|ruby)
+	manager      string // 二级包/环境管理器 (fnm|nvm|pnpm|conda|cargo|go|brew|system|app|manual|rvm)
+	scope        string // 三级环境/版本标识；空串=无独立环境
+	origin       string // 例: conda:miniforge3/envs/ml / fnm:v22.12.0
 	realpath     string
 	occurrences  []Occurrence
 	in_path      bool // 管理器根目录发现但当前不在 PATH 中时为 false
@@ -84,20 +86,36 @@ pub fn merge_by_name(entries []Entry) []MergedEntry {
 	return out
 }
 
-// filter_by_source 按 source 过滤；source 为空串时返回全部。
-pub fn filter_by_source(entries []Entry, source string) []Entry {
-	if source == '' {
+// filter_by_ecosystem 按 ecosystem 过滤；ecosystem 为空串或 'all' 时返回全部。
+pub fn filter_by_ecosystem(entries []Entry, eco string) []Entry {
+	if eco == '' || eco == 'all' {
 		return entries
 	}
-	return entries.filter(it.source == source)
+	return entries.filter(it.ecosystem == eco)
 }
 
-// filter_by_scope 按 scope 过滤；scope 为空串时返回全部。
+// filter_by_manager 按 manager 过滤；manager 为空串或 'all' 时返回全部。
+pub fn filter_by_manager(entries []Entry, mgr string) []Entry {
+	if mgr == '' || mgr == 'all' {
+		return entries
+	}
+	return entries.filter(it.manager == mgr)
+}
+
+// filter_by_scope 按 scope 过滤；scope 为空串或 'all' 时返回全部。
 pub fn filter_by_scope(entries []Entry, scope string) []Entry {
-	if scope == '' {
+	if scope == '' || scope == 'all' {
 		return entries
 	}
 	return entries.filter(it.scope == scope)
+}
+
+// filter_by_source 兼容按来源过滤：匹配 ecosystem、manager 或 source_id。
+pub fn filter_by_source(entries []Entry, source string) []Entry {
+	if source == '' || source == 'all' {
+		return entries
+	}
+	return entries.filter(it.ecosystem == source || it.manager == source || it.source_id == source)
 }
 
 // filter_by_text 对 name/description/origin 做不区分大小写的包含匹配。
@@ -139,4 +157,142 @@ pub fn fuzzy_score(needle string, hay string) ?int {
 		pi = found + 1
 	}
 	return score
+}
+
+// SearchResult 包装检索结果及面向 AI/用户的行动指引。
+pub struct SearchResult {
+pub:
+	entry      Entry
+	score      int
+	how_to_run string
+	switch_env string
+}
+
+// action_guidance 推导针对 AI/用户的直接执行路径与环境切换命令。
+pub fn action_guidance(e Entry) (string, string) {
+	how_to_run := if e.in_path { e.name } else { e.realpath }
+	mut switch_env := ''
+	if !e.in_path {
+		if e.manager in ['anaconda3', 'miniforge3', 'miniconda3', 'conda'] && e.scope != '' {
+			switch_env = 'conda activate ${e.scope}'
+		} else if e.manager == 'fnm' && e.scope != '' {
+			switch_env = 'fnm use ${e.scope}'
+		} else if e.manager == 'nvm' && e.scope != '' {
+			switch_env = 'nvm use ${e.scope}'
+		} else if e.manager == 'uv' {
+			switch_env = 'uv run ${e.name}'
+		} else if e.manager == 'go' && e.scope == 'gopath' {
+			switch_env = 'export PATH="\$GOPATH/bin:\$PATH"'
+		}
+	}
+	return how_to_run, switch_env
+}
+
+// rank_search 对 entries 执行多词加权检索与排序，并返回带行动指引的结果列表。
+pub fn rank_search(entries []Entry, query string) []SearchResult {
+	trimmed := query.trim_space()
+	if trimmed == '' {
+		mut res := []SearchResult{cap: entries.len}
+		for e in entries {
+			htr, se := action_guidance(e)
+			res << SearchResult{
+				entry:      e
+				score:      0
+				how_to_run: htr
+				switch_env: se
+			}
+		}
+		return res
+	}
+
+	tokens := trimmed.to_lower().split(' ').filter(it != '')
+	if tokens.len == 0 {
+		return []SearchResult{}
+	}
+
+	// 1. 尝试 AND 匹配：每个 token 必须在条目的某些字段中出现
+	mut and_candidates := []SearchResult{}
+	mut or_candidates := []SearchResult{}
+
+	for e in entries {
+		name_l := e.name.to_lower()
+		desc_l := e.description.to_lower()
+		eco_l := e.ecosystem.to_lower()
+		mgr_l := e.manager.to_lower()
+		scope_l := e.scope.to_lower()
+		path_l := e.realpath.to_lower()
+
+		mut match_count := 0
+		mut score := 0
+
+		for tok in tokens {
+			mut tok_matched := false
+			if name_l == tok {
+				score += 1000
+				tok_matched = true
+			} else if name_l.starts_with(tok) {
+				score += 500
+				tok_matched = true
+			} else if name_l.contains(tok) {
+				score += 200
+				tok_matched = true
+			}
+
+			if desc_l.contains(tok) {
+				score += 60
+				tok_matched = true
+			}
+			if mgr_l == tok || scope_l == tok {
+				score += 50
+				tok_matched = true
+			} else if mgr_l.contains(tok) || scope_l.contains(tok) || eco_l.contains(tok) {
+				score += 30
+				tok_matched = true
+			}
+			if path_l.contains(tok) {
+				score += 20
+				tok_matched = true
+			}
+
+			if tok_matched {
+				match_count++
+			}
+		}
+
+		if match_count > 0 {
+			if e.in_path {
+				score += 20
+			}
+			htr, se := action_guidance(e)
+			sr := SearchResult{
+				entry:      e
+				score:      score
+				how_to_run: htr
+				switch_env: se
+			}
+			if match_count == tokens.len {
+				and_candidates << sr
+			} else {
+				or_candidates << sr
+			}
+		}
+	}
+
+	mut final_list := if and_candidates.len > 0 { and_candidates } else { or_candidates }
+	final_list.sort_with_compare(fn (a &SearchResult, b &SearchResult) int {
+		if a.score > b.score {
+			return -1
+		}
+		if a.score < b.score {
+			return 1
+		}
+		if a.entry.name < b.entry.name {
+			return -1
+		}
+		if a.entry.name > b.entry.name {
+			return 1
+		}
+		return 0
+	})
+	return final_list
 }

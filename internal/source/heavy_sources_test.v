@@ -90,7 +90,9 @@ fn test_brew_attribute_roots_scopes() {
 		assert false
 		return
 	}
-	assert attr.source == 'brew'
+	assert attr.source_id == 'brew'
+	assert attr.ecosystem == 'brew'
+	assert attr.manager == 'brew'
 	assert attr.origin == 'brew'
 	assert attr.scope == ''
 	assert_none_attr(src.attribute('/usr/bin/ls'))
@@ -107,7 +109,9 @@ fn test_brew_empty_prefixes() {
 		assert false
 		return
 	}
-	assert attr.source == 'brew'
+	assert attr.source_id == 'brew'
+	assert attr.ecosystem == 'brew'
+	assert attr.manager == 'brew'
 }
 
 // test_npm_attribute_and_enrich 假 fnm 安装 fixture：归因（包/node 本体/符号链接）与 enrich。
@@ -136,30 +140,34 @@ fn test_npm_attribute_and_enrich() {
 			bin_dir:       bin_dir
 			modules_dir:   mod_dir
 			origin_prefix: 'fnm'
-			scope:         'fnm/v22.12.0'
+			scope:         'v22.12.0'
 		}]
 	}
 	// roots / scopes
 	assert src.roots() == [bin_dir]
 	scopes := src.scopes()
 	assert scopes.len == 1
-	assert scopes[0].id == 'fnm/v22.12.0' && scopes[0].label == 'fnm/v22.12.0'
+	assert scopes[0].id == 'v22.12.0' && scopes[0].label == 'v22.12.0'
 	// node 本体归因（bin 下且不经 node_modules）
 	a1 := src.attribute(node_bin) or {
 		assert false
 		return
 	}
-	assert a1.source == 'npm'
+	assert a1.source_id == 'npm'
+	assert a1.ecosystem == 'node'
+	assert a1.manager == 'fnm'
 	assert a1.origin == 'node@fnm/v22.12.0'
-	assert a1.scope == 'fnm/v22.12.0'
+	assert a1.scope == 'v22.12.0'
 	// 包文件归因（node_modules 下）
 	a2 := src.attribute(ts_bin) or {
 		assert false
 		return
 	}
-	assert a2.source == 'npm'
+	assert a2.source_id == 'npm'
+	assert a2.ecosystem == 'node'
+	assert a2.manager == 'fnm'
 	assert a2.origin == 'npm@fnm/v22.12.0'
-	assert a2.scope == 'fnm/v22.12.0'
+	assert a2.scope == 'v22.12.0'
 	// 符号链接 realpath 解析后落在 node_modules 下 → 包归因
 	// （macOS 上 /tmp 会解析为 /private/tmp，故只断言后缀与归因结果）
 	resolved := os.real_path(os.join_path(bin_dir, 'tsc'))
@@ -174,12 +182,58 @@ fn test_npm_attribute_and_enrich() {
 	assert_none_attr(src.attribute(os.join_path(root, 'elsewhere', 'bin', 'node')))
 	// enrich
 	mut entries := []model.Entry{}
-	entries << model.Entry{ name: 'tsc', source: 'npm', origin: 'npm@fnm/v22.12.0', scope: 'fnm/v22.12.0', realpath: ts_bin }
-	entries << model.Entry{ name: 'cli', source: 'npm', origin: 'npm@fnm/v22.12.0', scope: 'fnm/v22.12.0', realpath: scoped_bin }
-	entries << model.Entry{ name: 'bq', source: 'npm', origin: 'npm@fnm/v22.12.0', scope: 'fnm/v22.12.0', realpath: os.join_path(mod_dir, 'badjson', 'bin', 'bq') }
-	entries << model.Entry{ name: 'nq', source: 'npm', origin: 'npm@fnm/v22.12.0', scope: 'fnm/v22.12.0', realpath: os.join_path(mod_dir, 'nopkgjson', 'bin', 'nq') }
-	entries << model.Entry{ name: 'node', source: 'npm', origin: 'node@fnm/v22.12.0', scope: 'fnm/v22.12.0', realpath: node_bin }
-	entries << model.Entry{ name: 'ls', source: 'system', realpath: '/usr/bin/ls' }
+	entries << model.Entry{
+		name:      'tsc'
+		source_id: 'npm'
+		ecosystem: 'node'
+		manager:   'fnm'
+		origin:    'npm@fnm/v22.12.0'
+		scope:     'v22.12.0'
+		realpath:  ts_bin
+	}
+	entries << model.Entry{
+		name:      'cli'
+		source_id: 'npm'
+		ecosystem: 'node'
+		manager:   'fnm'
+		origin:    'npm@fnm/v22.12.0'
+		scope:     'v22.12.0'
+		realpath:  scoped_bin
+	}
+	entries << model.Entry{
+		name:      'bq'
+		source_id: 'npm'
+		ecosystem: 'node'
+		manager:   'fnm'
+		origin:    'npm@fnm/v22.12.0'
+		scope:     'v22.12.0'
+		realpath:  os.join_path(mod_dir, 'badjson', 'bin', 'bq')
+	}
+	entries << model.Entry{
+		name:      'nq'
+		source_id: 'npm'
+		ecosystem: 'node'
+		manager:   'fnm'
+		origin:    'npm@fnm/v22.12.0'
+		scope:     'v22.12.0'
+		realpath:  os.join_path(mod_dir, 'nopkgjson', 'bin', 'nq')
+	}
+	entries << model.Entry{
+		name:      'node'
+		source_id: 'npm'
+		ecosystem: 'node'
+		manager:   'fnm'
+		origin:    'node@fnm/v22.12.0'
+		scope:     'v22.12.0'
+		realpath:  node_bin
+	}
+	entries << model.Entry{
+		name:      'ls'
+		source_id: 'system'
+		ecosystem: 'system'
+		manager:   'system'
+		realpath:  '/usr/bin/ls'
+	}
 	src.enrich(mut entries) or {
 		assert false
 		return
@@ -266,37 +320,74 @@ fn test_conda_attribute_and_enrich() {
 	mkfake_exec(os.join_path(base_bin, 'conda'))
 	src := CondaSource{
 		envs: [
-			CondaEnv{ bin_dir: base_bin, scope: 'miniforge3/base' },
-			CondaEnv{ bin_dir: ml_bin, scope: 'miniforge3/envs/ml' },
+			CondaEnv{ bin_dir: base_bin, manager: 'miniforge3', scope: 'base' },
+			CondaEnv{ bin_dir: ml_bin, manager: 'miniforge3', scope: 'ml' },
 		]
 	}
+	assert src.ecosystem() == 'python'
 	assert src.id() == 'conda' && src.priority() == 30 && src.label() == 'conda'
 	roots := src.roots()
 	assert roots.len == 2
 	assert base_bin in roots && ml_bin in roots
 	scopes := src.scopes()
-	assert scopes.map(it.id) == ['miniforge3/base', 'miniforge3/envs/ml']
+	assert scopes.map(it.id) == ['base', 'ml']
 	// 环境内归因
 	a := src.attribute(os.join_path(ml_bin, 'python')) or {
 		assert false
 		return
 	}
-	assert a.source == 'conda'
-	assert a.origin == 'conda:miniforge3/envs/ml'
-	assert a.scope == 'miniforge3/envs/ml'
+	assert a.source_id == 'conda'
+	assert a.ecosystem == 'python'
+	assert a.manager == 'miniforge3'
+	assert a.origin == 'miniforge3:ml'
+	assert a.scope == 'ml'
 	// base 归因
 	ab := src.attribute(os.join_path(base_bin, 'conda')) or {
 		assert false
 		return
 	}
-	assert ab.origin == 'conda:miniforge3/base'
+	assert ab.origin == 'miniforge3:base'
+	assert ab.manager == 'miniforge3'
+	assert ab.scope == 'base'
 	assert_none_attr(src.attribute('/usr/local/bin/git'))
 	// enrich：meta 命中填版本与 meta mtime；base 无 meta 目录不受影响
 	mut entries := []model.Entry{}
-	entries << model.Entry{ name: 'python', source: 'conda', origin: 'conda:miniforge3/envs/ml', scope: 'miniforge3/envs/ml', realpath: os.join_path(ml_bin, 'python') }
-	entries << model.Entry{ name: 'sqlite3', source: 'conda', origin: 'conda:miniforge3/envs/ml', scope: 'miniforge3/envs/ml', realpath: os.join_path(ml_bin, 'sqlite3') }
-	entries << model.Entry{ name: 'unknown', source: 'conda', origin: 'conda:miniforge3/envs/ml', scope: 'miniforge3/envs/ml', realpath: os.join_path(ml_bin, 'unknown') }
-	entries << model.Entry{ name: 'conda', source: 'conda', origin: 'conda:miniforge3/base', scope: 'miniforge3/base', realpath: os.join_path(base_bin, 'conda') }
+	entries << model.Entry{
+		name:      'python'
+		source_id: 'conda'
+		ecosystem: 'python'
+		manager:   'miniforge3'
+		origin:    'miniforge3:ml'
+		scope:     'ml'
+		realpath:  os.join_path(ml_bin, 'python')
+	}
+	entries << model.Entry{
+		name:      'sqlite3'
+		source_id: 'conda'
+		ecosystem: 'python'
+		manager:   'miniforge3'
+		origin:    'miniforge3:ml'
+		scope:     'ml'
+		realpath:  os.join_path(ml_bin, 'sqlite3')
+	}
+	entries << model.Entry{
+		name:      'unknown'
+		source_id: 'conda'
+		ecosystem: 'python'
+		manager:   'miniforge3'
+		origin:    'miniforge3:ml'
+		scope:     'ml'
+		realpath:  os.join_path(ml_bin, 'unknown')
+	}
+	entries << model.Entry{
+		name:      'conda'
+		source_id: 'conda'
+		ecosystem: 'python'
+		manager:   'miniforge3'
+		origin:    'miniforge3:base'
+		scope:     'base'
+		realpath:  os.join_path(base_bin, 'conda')
+	}
 	src.enrich(mut entries) or {
 		assert false
 		return
@@ -309,6 +400,65 @@ fn test_conda_attribute_and_enrich() {
 	assert entries[3].version == '' // base 无 conda-meta，跳过
 }
 
+// test_uv_attribute_and_enrich 假 uv tools 与 python fixture：归因/scopes/enrich。
+fn test_uv_attribute_and_enrich() {
+	root := fixture_root('uv')
+	tools_dir := os.join_path(root, 'tools')
+	python_dir := os.join_path(root, 'python')
+	local_bin := os.join_path(root, 'bin')
+	kimi_bin := os.join_path(tools_dir, 'kimi-cli', 'bin', 'kimi')
+	py_bin := os.join_path(python_dir, 'cpython-3.11', 'bin', 'python3.11')
+	uv_bin := os.join_path(local_bin, 'uv')
+	mkfake_exec(kimi_bin)
+	mkfake_exec(py_bin)
+	mkfake_exec(uv_bin)
+
+	src := UvSource{
+		tools_dir:  tools_dir
+		python_dir: python_dir
+		local_bin:  local_bin
+	}
+
+	assert src.ecosystem() == 'python'
+	assert src.id() == 'uv'
+	assert src.label() == 'uv'
+	assert src.priority() == 25
+
+	// 1. 工具归因
+	a_tool := src.attribute(kimi_bin) or {
+		assert false
+		return
+	}
+	assert a_tool.source_id == 'uv'
+	assert a_tool.ecosystem == 'python'
+	assert a_tool.manager == 'uv'
+	assert a_tool.scope == 'tools'
+	assert a_tool.origin == 'uv:tool/kimi-cli'
+
+	// 2. Python 运行时工具链归因
+	a_py := src.attribute(py_bin) or {
+		assert false
+		return
+	}
+	assert a_py.ecosystem == 'python'
+	assert a_py.manager == 'uv'
+	assert a_py.scope == 'toolchain'
+	assert a_py.origin == 'uv:python'
+
+	// 3. uv 本身归因
+	a_uv := src.attribute(uv_bin) or {
+		assert false
+		return
+	}
+	assert a_uv.ecosystem == 'python'
+	assert a_uv.manager == 'uv'
+	assert a_uv.scope == 'tools'
+	assert a_uv.origin == 'uv:self'
+
+	// 4. 非 uv 路径
+	assert_none_attr(src.attribute('/usr/bin/python'))
+}
+
 // test_cargo_attribute_and_enrich 假 .crates2.json fixture：归因/enrich/文件缺失降级。
 fn test_cargo_attribute_and_enrich() {
 	root := fixture_root('cargo')
@@ -319,6 +469,7 @@ fn test_cargo_attribute_and_enrich() {
 	c2 := os.join_path(root, '.crates2.json')
 	mkfile(c2, '{"installs":{"ripgrep 14.1.0 (registry+https://github.com/rust-lang/crates.io-index)":{"bins":["rg"]},"xtask 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)":{"bins":["custom-tool","extra"]}}}')
 	src := CargoSource{ root: bin, crates2_path: c2 }
+	assert src.ecosystem() == 'rust'
 	assert src.id() == 'cargo' && src.priority() == 40 && src.label() == 'cargo'
 	assert src.roots() == [bin]
 	assert src.scopes().len == 0
@@ -326,14 +477,35 @@ fn test_cargo_attribute_and_enrich() {
 		assert false
 		return
 	}
-	assert a.source == 'cargo' && a.origin == 'cargo' && a.scope == ''
+	assert a.source_id == 'cargo' && a.ecosystem == 'rust' && a.manager == 'cargo' && a.origin == 'cargo' && a.scope == ''
 	assert_none_attr(src.attribute('/usr/local/bin/git'))
 	assert_none_attr(src.attribute(bin)) // 恰为根目录本身不算
 	// enrich
 	mut entries := []model.Entry{}
-	entries << model.Entry{ name: 'rg', source: 'cargo', origin: 'cargo', realpath: os.join_path(bin, 'rg') }
-	entries << model.Entry{ name: 'custom-tool', source: 'cargo', origin: 'cargo', realpath: os.join_path(bin, 'custom-tool') }
-	entries << model.Entry{ name: 'mystery', source: 'cargo', origin: 'cargo', realpath: os.join_path(bin, 'mystery') }
+	entries << model.Entry{
+		name:      'rg'
+		source_id: 'cargo'
+		ecosystem: 'rust'
+		manager:   'cargo'
+		origin:    'cargo'
+		realpath:  os.join_path(bin, 'rg')
+	}
+	entries << model.Entry{
+		name:      'custom-tool'
+		source_id: 'cargo'
+		ecosystem: 'rust'
+		manager:   'cargo'
+		origin:    'cargo'
+		realpath:  os.join_path(bin, 'custom-tool')
+	}
+	entries << model.Entry{
+		name:      'mystery'
+		source_id: 'cargo'
+		ecosystem: 'rust'
+		manager:   'cargo'
+		origin:    'cargo'
+		realpath:  os.join_path(bin, 'mystery')
+	}
 	src.enrich(mut entries) or {
 		assert false
 		return
@@ -345,7 +517,14 @@ fn test_cargo_attribute_and_enrich() {
 	// crates2 缺失：整体跳过不失败
 	missing := CargoSource{ root: bin, crates2_path: os.join_path(root, 'nope.json') }
 	mut es2 := []model.Entry{}
-	es2 << model.Entry{ name: 'rg', source: 'cargo', origin: 'cargo', realpath: os.join_path(bin, 'rg') }
+	es2 << model.Entry{
+		name:      'rg'
+		source_id: 'cargo'
+		ecosystem: 'rust'
+		manager:   'cargo'
+		origin:    'cargo'
+		realpath:  os.join_path(bin, 'rg')
+	}
 	missing.enrich(mut es2) or {
 		assert false
 		return
@@ -365,28 +544,34 @@ fn test_go_attribute_and_enrich() {
 	src := GoSource{
 		roots: [os.join_path(root, 'bin')]
 	}
+	assert src.ecosystem() == 'go'
 	assert src.id() == 'go' && src.priority() == 50 && src.label() == 'Go'
 	assert src.roots() == [os.join_path(root, 'bin')]
-	assert src.scopes().len == 0
+	assert src.scopes().len == 2
 	a := src.attribute(os.join_path(root, 'bin', 'dlv')) or {
 		assert false
 		return
 	}
-	assert a.source == 'go' && a.origin == 'go' && a.scope == ''
+	assert a.source_id == 'go' && a.ecosystem == 'go' && a.manager == 'go' && a.origin == 'go:gopath' && a.scope == 'gopath'
 	assert_none_attr(src.attribute('/usr/local/bin/git'))
 	// enrich：fixture 二进制非 Go 产物 → 无 mod 行 → version 留空且不报错
 	// （真机有 go 时逐条调用返回无 mod 行；无 go 时整体跳过；两种环境下断言一致）
 	mut entries := []model.Entry{}
 	entries << model.Entry{
-		name:     'dlv'
-		source:   'go'
-		origin:   'go'
-		realpath: os.join_path(root, 'bin', 'dlv')
+		name:      'dlv'
+		source_id: 'go'
+		ecosystem: 'go'
+		manager:   'go'
+		origin:    'go:gopath'
+		scope:     'gopath'
+		realpath:  os.join_path(root, 'bin', 'dlv')
 	}
 	entries << model.Entry{
-		name:     'ls'
-		source:   'system'
-		realpath: '/usr/bin/ls'
+		name:      'ls'
+		source_id: 'system'
+		ecosystem: 'system'
+		manager:   'system'
+		realpath:  '/usr/bin/ls'
 	}
 	src.enrich(mut entries) or {
 		assert false
@@ -413,6 +598,7 @@ fn test_pnpm_attribute_and_enrich() {
 		root:       pnpm_home
 		global_dir: os.join_path(pnpm_home, 'global')
 	}
+	assert src.ecosystem() == 'node'
 	assert src.id() == 'pnpm' && src.priority() == 7 && src.label() == 'pnpm'
 	assert src.roots() == [pnpm_home]
 	assert src.scopes().len == 0
@@ -421,21 +607,25 @@ fn test_pnpm_attribute_and_enrich() {
 		assert false
 		return
 	}
-	assert a.source == 'pnpm' && a.origin == 'pnpm' && a.scope == ''
+	assert a.source_id == 'pnpm' && a.ecosystem == 'node' && a.manager == 'pnpm' && a.origin == 'pnpm:global' && a.scope == ''
 	assert_none_attr(src.attribute('/usr/local/bin/git'))
 
 	mut entries := []model.Entry{}
 	entries << model.Entry{
-		name:     'appium'
-		source:   'pnpm'
-		origin:   'pnpm'
-		realpath: os.join_path(pnpm_home, 'appium')
+		name:      'appium'
+		source_id: 'pnpm'
+		ecosystem: 'node'
+		manager:   'pnpm'
+		origin:    'pnpm:global'
+		realpath:  os.join_path(pnpm_home, 'appium')
 	}
 	entries << model.Entry{
-		name:     'ports'
-		source:   'pnpm'
-		origin:   'pnpm'
-		realpath: os.join_path(pnpm_home, 'ports')
+		name:      'ports'
+		source_id: 'pnpm'
+		ecosystem: 'node'
+		manager:   'pnpm'
+		origin:    'pnpm:global'
+		realpath:  os.join_path(pnpm_home, 'ports')
 	}
 	src.enrich(mut entries) or {
 		assert false
