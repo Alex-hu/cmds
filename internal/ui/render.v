@@ -89,6 +89,113 @@ fn source_display_name(s string) string {
 	}
 }
 
+// subtab_display_name 将长环境路径优化为更紧凑易读的标签（如 anaconda3/envs/myenv -> anaconda3/myenv）。
+pub fn subtab_display_name(cur_tab string, s string) string {
+	if s == 'all' {
+		return if cur_tab == 'conda' { '所有环境' } else { '所有版本' }
+	}
+	if cur_tab == 'conda' {
+		return s.replace('/envs/', '/')
+	}
+	return s
+}
+
+// compute_scroll_offset 计算横向滚动视口的起始下标，确保 active_idx 始终在可视范围内。
+pub fn compute_scroll_offset(n int, active_idx int, cur_offset int, cols int, prefix_w int, get_width fn (int) int) int {
+	if n == 0 {
+		return 0
+	}
+	mut offset := cur_offset
+	if active_idx < offset {
+		offset = active_idx
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= n {
+		offset = n - 1
+	}
+
+	// 1. 如果当前 offset 导致 active_idx 超出屏幕右侧，向右推进 offset 直到 active_idx 可见
+	for offset < active_idx {
+		left_w := if offset > 0 { 2 } else { 0 }
+		right_w := if active_idx < n - 1 { 2 } else { 0 }
+		mut total_w := prefix_w + left_w + right_w
+		for i in offset .. (active_idx + 1) {
+			total_w += get_width(i)
+		}
+		if total_w <= cols {
+			break
+		}
+		offset++
+	}
+
+	// 2. 如果 active_idx 已经可见，且屏幕左侧有充足空间，向左展开更多前序 Tab
+	for offset > 0 {
+		candidate := offset - 1
+		left_w := if candidate > 0 { 2 } else { 0 }
+		right_w := if active_idx < n - 1 { 2 } else { 0 }
+		mut total_w := prefix_w + left_w + right_w
+		for i in candidate .. (active_idx + 1) {
+			total_w += get_width(i)
+		}
+		if total_w <= cols {
+			offset = candidate
+		} else {
+			break
+		}
+	}
+
+	return offset
+}
+
+// render_scrollable_tabs 渲染带横向滑动视口与 ◀ ▶ 指示器的 Tab 栏。
+fn render_scrollable_tabs(n int, active_idx int, offset int, cols int, prefix string, is_subtab bool, render_pill fn (int) string, get_width fn (int) int) string {
+	if n == 0 {
+		return prefix
+	}
+	prefix_w := term.printable_len(prefix)
+	left_w := if offset > 0 { 2 } else { 0 }
+
+	// 寻找 end_idx：从 offset 开始，能塞入 cols 范围内的最大下标
+	mut end_idx := active_idx
+	mut cur_w := prefix_w + left_w
+	for i in offset .. (active_idx + 1) {
+		cur_w += get_width(i)
+	}
+
+	// 尝试向右多纳入后续的 tab 项
+	for i in (active_idx + 1) .. n {
+		w := get_width(i)
+		right_w := if i < n - 1 { 2 } else { 0 }
+		if cur_w + w + right_w <= cols {
+			cur_w += w
+			end_idx = i
+		} else {
+			break
+		}
+	}
+
+	mut sb := strings.new_builder(256)
+	sb.write_string(prefix)
+
+	if offset > 0 {
+		arrow_color := if is_subtab { fg_yellow } else { fg_accent }
+		sb.write_string('${arrow_color}◀ ${ansi_reset}')
+	}
+
+	for i in offset .. (end_idx + 1) {
+		sb.write_string(render_pill(i))
+	}
+
+	if end_idx < n - 1 {
+		arrow_color := if is_subtab { fg_yellow } else { fg_accent }
+		sb.write_string('${arrow_color} ▶${ansi_reset}')
+	}
+
+	return sb.str()
+}
+
 // pad_or_truncate 依据终端可视宽度做对齐或截断，确保汉字和英文字符排版不破裂。
 pub fn pad_or_truncate(s string, width int) string {
 	vis_len := term.printable_len(s)
@@ -180,44 +287,67 @@ pub fn render_view(state AppState, cols int, rows int) string {
 	banner := ' cmds · 命令行工具索引与查询 (按来源与环境分类)'
 	lines << '${fg_accent}${ansi_bold}${pad_or_truncate(banner, cols)}${ansi_reset}'
 
-	// 2. 一级 Tab 栏
-	mut tab_line := strings.new_builder(256)
-	tab_line.write_string(' ')
-	for i, t in state.tabs {
-		count := state.tab_counts[t] or { 0 }
-		label := '${source_display_name(t)} ${count}'
-		if i == state.active_tab_idx {
-			tab_line.write_string('${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} ')
-		} else {
-			tab_line.write_string('${fg_gray} ${label} ${ansi_reset} ')
-		}
-	}
-	lines << pad_or_truncate(tab_line.str(), cols)
+	// 2. 一级 Tab 栏（带横向滚动视口与 ◀ ▶ 指示器）
+	tab_line := render_scrollable_tabs(state.tabs.len,
+		state.active_tab_idx,
+		state.tab_offset,
+		cols,
+		' ',
+		false,
+		fn [state] (idx int) string {
+			t := state.tabs[idx]
+			count := state.tab_counts[t] or { 0 }
+			label := '${source_display_name(t)} ${count}'
+			if idx == state.active_tab_idx {
+				return '${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
+			} else {
+				return '${fg_gray} ${label} ${ansi_reset} '
+			}
+		},
+		fn [state] (idx int) int {
+			t := state.tabs[idx]
+			count := state.tab_counts[t] or { 0 }
+			label := '${source_display_name(t)} ${count}'
+			vis := term.printable_len(label)
+			return if idx == state.active_tab_idx { vis + 6 } else { vis + 2 }
+		})
+	lines << pad_or_truncate(tab_line, cols)
 
-	// 3. 二级 Tab 栏（Scope）
+	// 3. 二级 Tab 栏（Scope，带横向滚动视口与 ◀ ▶ 指示器）
 	cur_tab := state.tabs[state.active_tab_idx]
-	mut sub_line := strings.new_builder(256)
-	if cur_tab in ['conda', 'npm'] {
-		prefix := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
-		sub_line.write_string('${fg_yellow}${prefix}${ansi_reset}')
-		for i, s in state.subtabs {
-			count := state.subtab_counts[s] or { 0 }
-			disp_sub := if s == 'all' {
-				if cur_tab == 'conda' { '所有环境' } else { '所有版本' }
-			} else {
-				s
-			}
-			label := '${disp_sub} · ${count}'
-			if i == state.active_subtab_idx {
-				sub_line.write_string('${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} ')
-			} else {
-				sub_line.write_string('${fg_gray} ${label} ${ansi_reset} ')
-			}
-		}
+	mut sub_line := ''
+	if cur_tab in ['conda', 'npm'] && state.subtabs.len > 0 {
+		prefix_str := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
+		prefix := '${fg_yellow}${prefix_str}${ansi_reset}'
+		sub_line = render_scrollable_tabs(state.subtabs.len,
+			state.active_subtab_idx,
+			state.subtab_offset,
+			cols,
+			prefix,
+			true,
+			fn [state, cur_tab] (idx int) string {
+				s := state.subtabs[idx]
+				count := state.subtab_counts[s] or { 0 }
+				disp_sub := subtab_display_name(cur_tab, s)
+				label := '${disp_sub} · ${count}'
+				if idx == state.active_subtab_idx {
+					return '${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} '
+				} else {
+					return '${fg_gray} ${label} ${ansi_reset} '
+				}
+			},
+			fn [state, cur_tab] (idx int) int {
+				s := state.subtabs[idx]
+				count := state.subtab_counts[s] or { 0 }
+				disp_sub := subtab_display_name(cur_tab, s)
+				label := '${disp_sub} · ${count}'
+				vis := term.printable_len(label)
+				return if idx == state.active_subtab_idx { vis + 4 } else { vis + 2 }
+			})
 	} else {
-		sub_line.write_string(' ${fg_dark}(该来源无二级分类)${ansi_reset}')
+		sub_line = ' ${fg_dark}(该来源无二级分类)${ansi_reset}'
 	}
-	lines << pad_or_truncate(sub_line.str(), cols)
+	lines << pad_or_truncate(sub_line, cols)
 
 	// 4. 搜索行
 	mut search_line := strings.new_builder(128)

@@ -9,8 +9,10 @@ pub mut:
 	all_entries       []model.Entry
 	tabs              []string
 	active_tab_idx    int
+	tab_offset        int
 	subtabs           []string
 	active_subtab_idx int
+	subtab_offset     int
 	tab_counts        map[string]int
 	subtab_counts     map[string]int
 	visible_entries   []model.Entry
@@ -47,6 +49,7 @@ fn (mut s AppState) compute_tab_counts() {
 fn (mut s AppState) refresh_subtabs() {
 	cur_tab := s.tabs[s.active_tab_idx]
 	s.active_subtab_idx = 0
+	s.subtab_offset = 0
 	s.subtabs = []
 	s.subtab_counts = map[string]int{}
 
@@ -226,6 +229,43 @@ pub fn (mut s AppState) prev_subtab() {
 	}
 }
 
+// adjust_tab_offsets 依据终端宽度 cols 调整一级 Tab 与二级 Subtab 的横向滚动视口，确保激活项始终可见。
+pub fn (mut s AppState) adjust_tab_offsets(cols int) {
+	s.tab_offset = compute_scroll_offset(s.tabs.len,
+		s.active_tab_idx,
+		s.tab_offset,
+		cols,
+		1,
+		fn [s] (idx int) int {
+			t := s.tabs[idx]
+			count := s.tab_counts[t] or { 0 }
+			label := '${source_display_name(t)} ${count}'
+			vis := term.printable_len(label)
+			return if idx == s.active_tab_idx { vis + 6 } else { vis + 2 }
+		})
+
+	cur_tab := s.tabs[s.active_tab_idx]
+	if cur_tab in ['conda', 'npm'] && s.subtabs.len > 0 {
+		prefix_str := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
+		prefix_w := term.printable_len(prefix_str)
+		s.subtab_offset = compute_scroll_offset(s.subtabs.len,
+			s.active_subtab_idx,
+			s.subtab_offset,
+			cols,
+			prefix_w,
+			fn [s, cur_tab] (idx int) int {
+				sub := s.subtabs[idx]
+				count := s.subtab_counts[sub] or { 0 }
+				disp_sub := subtab_display_name(cur_tab, sub)
+				label := '${disp_sub} · ${count}'
+				vis := term.printable_len(label)
+				return if idx == s.active_subtab_idx { vis + 4 } else { vis + 2 }
+			})
+	} else {
+		s.subtab_offset = 0
+	}
+}
+
 // run 启动交互式 TUI 浏览器主循环。
 pub fn run(entries []model.Entry) ! {
 	if entries.len == 0 {
@@ -254,6 +294,9 @@ pub fn run(entries []model.Entry) ! {
 		// 根据屏幕高度动态计算单屏展示行数 (page_size)
 		// 9 行用于固定的标题栏、两层 Tab、搜索栏、表格边框及表头、底栏
 		state.page_size = if rows > 10 { rows - 9 } else { 1 }
+
+		// 动态调整一级与二级 Tab 滚动视口，确保当前高亮的 Tab 始终在可视区域内
+		state.adjust_tab_offsets(cols)
 
 		if state.visible_entries.len > 0 && state.cursor_idx >= state.visible_entries.len {
 			state.cursor_idx = state.visible_entries.len - 1

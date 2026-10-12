@@ -203,3 +203,75 @@ fn test_render_view_no_trailing_newline_and_fixed_header() {
 	// 验证包含底部分页信息
 	assert view.contains('第 1/1 页')
 }
+
+fn test_subtab_display_name() {
+	assert subtab_display_name('conda', 'all') == '所有环境'
+	assert subtab_display_name('npm', 'all') == '所有版本'
+	assert subtab_display_name('conda', 'anaconda3/envs/myenv') == 'anaconda3/myenv'
+	assert subtab_display_name('conda', 'anaconda3/base') == 'anaconda3/base'
+	assert subtab_display_name('npm', 'fnm/v22.12.0') == 'fnm/v22.12.0'
+}
+
+fn test_compute_scroll_offset() {
+	// 模拟 5 个 tab，每个宽度 20
+	// 屏幕 cols 为 50，前缀宽度为 5
+	// 最多同时容纳约 2 个 tab
+	get_w := fn (_ int) int {
+		return 20
+	}
+
+	// 激活第 0 项：offset 应当为 0
+	off0 := compute_scroll_offset(5, 0, 0, 50, 5, get_w)
+	assert off0 == 0
+
+	// 激活第 1 项：从 0 开始宽 5 + 20 + 20 + 2 = 47 <= 50，依然能容纳，offset 为 0
+	off1 := compute_scroll_offset(5, 1, 0, 50, 5, get_w)
+	assert off1 == 0
+
+	// 激活第 3 项：从 0 开始塞不下第 3 项，必须向右滚动
+	off3 := compute_scroll_offset(5, 3, 0, 50, 5, get_w)
+	assert off3 >= 2
+	assert off3 <= 3
+
+	// 从 offset 2 回退到第 1 项：offset 必须向左退回到 <= 1
+	off_back := compute_scroll_offset(5, 1, off3, 50, 5, get_w)
+	assert off_back <= 1
+}
+
+fn test_subtab_horizontal_scrolling_in_view() {
+	// 构造 6 个 conda 环境的条目
+	mut entries := []model.Entry{}
+	envs := ['base', 'myenv', 'omni', 'py312', 'py39', 'torch']
+	for e in envs {
+		entries << model.Entry{
+			name:         'cmd_' + e
+			source:       'conda'
+			origin:       'conda:anaconda3/envs/' + e
+			scope:        'anaconda3/envs/' + e
+			realpath:     '/bin/' + e
+			in_path:      true
+			version:      '1.0'
+			description:  'test'
+			installed_at: '2025-01-01'
+		}
+	}
+
+	mut st := new_app_state(entries)
+	// 切换到 conda tab
+	conda_idx := st.tabs.index('conda')
+	st.active_tab_idx = conda_idx
+	st.refresh_subtabs()
+	st.apply_filter()
+
+	// 切换到最后一个环境 (torch)
+	st.active_subtab_idx = st.subtabs.len - 1
+	cols := 75 // 较窄的屏幕
+	rows := 24
+	st.adjust_tab_offsets(cols)
+
+	view := render_view(st, cols, rows)
+	// 验证包含左指示箭头 ◀
+	assert view.contains('◀')
+	// 验证当前选中的环境名在视口中完整可见且高亮包含在内
+	assert view.contains('torch')
+}
