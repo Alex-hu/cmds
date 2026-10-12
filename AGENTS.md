@@ -1,6 +1,6 @@
 # cmds — V 命令行工具工作区规范
 
-本仓库用 V 语言开发命令行工具 **cmds**（索引并查询本机已安装命令，按来源分类）。本文件是工作区工程规范；产品需求与架构见 [DESIGN.md](DESIGN.md)。改动数据层（model/discover/enrich/store）前必读 DESIGN.md 对应章节。
+本仓库用 V 语言开发命令行工具 **cmds**（索引并查询本机已安装命令，按来源分类）。本文件是工作区工程规范；产品与设计文档见 [docs/](docs/)（三级分类、search 子命令规格、各源元数据实测记录）。
 
 ## 环境
 
@@ -25,15 +25,19 @@
 ## 目录结构（当前实际）
 
 ```
-v.mod               # Module { name: 'cmds' ... }
+v.mod               # Module { name: 'cmds' ... }，dependencies: []（零 vpm 依赖）
 main.v              # 薄入口：全局 flag → 分发子命令（fp.allow_unknown_args() 放行子命令 flag）
-cmd/                # 子命令：mod.v 分发、update.v 索引管道、list.v、version.v
+Makefile            # build/prod/test/fmt/vet/deps/clean 工程化入口
+install.sh          # 一键安装脚本（下载 Release 预编译产物；也随 Release 资产分发）
+cmd/                # 子命令：mod.v 分发、update.v 索引管道、list.v、search.v、version.v
 internal/model/     # Entry/Occurrence/MergedEntry + 去重/过滤/模糊打分纯函数
 internal/scan/      # parse_path/scan_dir/scan_dirs 通用扫描（并行、保序）
-internal/source/    # protocol.v 接口 + registry.v + simple/heavy_sources.v 九个实现
+internal/source/    # protocol.v 接口 + registry.v + simple/heavy_sources.v 各源实现
 internal/store/     # SQLite 索引（open/save_all/load_all/query/meta_get/close）
-docs/SPIKE.md       # 各源元数据格式实测记录（改 enrich 前必读）
-mockups/            # 交互原型（A2 定稿）
+internal/ui/        # TUI 浏览器：app.v 主循环、key.v 按键解析、render.v 渲染
+thirdparty/sqlite/  # 自包含 SQLite 驱动（解耦 pkg-config，详见「已知坑」第一条）
+docs/               # SPIKE.md 实测记录 + HIERARCHY_3LEVEL_DESIGN.md + SEARCH_CMD_DESIGN.md
+.github/workflows/  # release.yml 发布流水线（见「发布」一节）
 ```
 
 模块规则（已在本机 V 0.5.2 实测）：
@@ -97,13 +101,21 @@ fn main() {
 - 测试文件 `*_test.v` 与被测代码同目录，函数名以 `test_` 开头，用 `assert` 断言。
 - main.v 只做装配不做逻辑；解析、转换、格式化等纯逻辑放进模块使其可测。
 
+## 发布（Release）
+
+- 入口：`.github/workflows/release.yml`。打 `v*` tag 并推送（`git tag v0.2.0 && git push origin v0.2.0`）即触发：装 V → `v test .` → 构建 macOS 三产物 → 打包（tar.gz + `.sha256`）→ 挂到 GitHub Release。Actions 页面可手动触发干跑（只产 artifact，不发布）。
+- **发版前同步版本号**，共三处：`v.mod` 的 `version`、`main.v` 的 `const version`、`cmd/version.v` 的 `tool_version`。
+- **V 版本必须 pin**：workflow 的 `V_COMMIT`（当前 `81be246`，即 V 0.5.2）与本机开发版本保持一致。V 小版本间有破坏性变更；升级流程是先在本机用新版跑通 `v test .`，再更新 `V_COMMIT`。
+- 全部产物在单个 `macos-latest`（arm64）runner 上完成：x86_64 用 `v -prod -arch x64` 交叉编译，universal 用 `lipo` 合成（两条路径均已本地实测）。不要改回双 runner 方案——GitHub 的 Intel mac runner 正在退役，且 mac 分钟费率是 Linux 的 10 倍。
+- 资产命名 `cmds-<tag>-macos-<arch>.tar.gz`（arch ∈ arm64/x86_64/universal）是 install.sh 的下载契约，改名必须两边同步。
+- install.sh 随 Release 资产分发，一键命令用 `releases/latest/download/install.sh` 稳定地址。两个前车之鉴：**不要**改走 raw.githubusercontent.com（部分网络 GET 持续 403）；**不要**用 api.github.com 解析最新版（未认证限流 60 次/小时，共享出口 IP 会耗尽）——现用 `releases/latest` 的 302 跳转落地 URL 提取 tag。
+
 ## 文档导航
 
-- [README.md](README.md) — 面向使用者的介绍与用法（与本文件分工：AGENTS.md 面向开发）。
-- [DESIGN.md](DESIGN.md) — 产品需求、来源分类学、数据模型、已确认决策。改数据层前必读。
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 模块分层、import 规则、关键机制、技术选型记录（ADR）。
-- [PLAN.md](PLAN.md) — 里程碑与任务拆解、验收标准、风险清单。
-- [mockups/](mockups/index.html) — 交互原型（浏览器打开）。已定稿：原型 A + 二级 scope tab（a-tabs.html，A2 版本）。
+- [README.md](README.md) / [README_zh.md](README_zh.md) — 面向使用者的介绍与安装用法（与本文件分工：AGENTS.md 面向开发）。
+- [docs/SPIKE.md](docs/SPIKE.md) — 各来源元数据格式实测记录（改 enrich 前必读）。
+- [docs/HIERARCHY_3LEVEL_DESIGN.md](docs/HIERARCHY_3LEVEL_DESIGN.md) — 三级分类层次设计。
+- [docs/SEARCH_CMD_DESIGN.md](docs/SEARCH_CMD_DESIGN.md) — search 子命令设计与 AI 友好指引规则。
 - 依赖政策与包管理：**允许按需引入第三方依赖**。优先选用维护活跃、测试完备的第三方库或标准库。第三方依赖统一在根目录 `v.mod` 的 `dependencies: [...]` 中声明，克隆项目后运行 `make deps`（或 `v sync`）自动还原（类似 Maven 的 dependency 管理）。原生系统依赖（如 `pkg-config`、`sqlite3`）属于构建环境前置依赖，由 `Makefile` 的 `check-deps` 自动预检。
 
 ## 已知坑
@@ -116,7 +128,6 @@ fn main() {
 - `vlib/cli`（Commander 式子命令框架）的自动 `--help` 实测报错（README 与实现不符）；子命令框架用 `flag` + 手写分发即可。
 - `vlib/term/ui`（termui）组件残缺，TUI 用 `term` 模块手写 ANSI；raw-mode API 用前先做 spike 验证。
 - 标准库没有字符串 pad 函数（也无 `string.pad_right` 方法），需要时自行实现（见 cmd/mod.v 的 `pad`）。CJK 字符宽度按 2 列计算，`term.printable_len` 可作参考。
-- 标准库没有字符串 pad 函数（也无 `string.pad_right` 方法），需要时自行实现（见 cmd/mod.v 的 `pad`）。
 - V 小版本间存在破坏性变更；升级 V 后先跑 `v test .` 全量回归再继续开发。
 - flag 的 `bool` 等方法签名含单字符缩写参数（`` `v` ``）与默认值，不要按旧版 `bool_` API 写。
 - 交叉编译产物默认落在当前目录，记得用 `-o` 指定并加入清理。

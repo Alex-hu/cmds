@@ -42,27 +42,38 @@ Modern developer workstations accumulate hundreds or thousands of CLI commands a
 
 ---
 
-## Quick Start
+## Installation
 
-### 1. Requirements
+### Option 1 — Prebuilt binary (recommended)
 
-- **V Compiler**: 0.5.x ([Installation Guide](https://vlang.io))
-- macOS (Apple Silicon or Intel)
-
-### 2. Build & Install
+No toolchain needed; works on both Apple Silicon and Intel Macs:
 
 ```sh
-# Clone repository
+curl -fsSL https://github.com/Alex-hu/cmds/releases/latest/download/install.sh | bash
+```
+
+The installer detects your CPU architecture (including Rosetta), verifies the SHA-256 checksum before installing, and puts `cmds` into `/usr/local/bin` (or `~/.local/bin` with a `$PATH` hint if that is not writable). It also supports `--version <tag>` and `--dest <dir>`.
+
+To install manually, download a tarball from [Releases](https://github.com/Alex-hu/cmds/releases) — `macos-arm64`, `macos-x86_64`, or `macos-universal` — extract it and put `cmds` anywhere on your `$PATH`.
+
+### Option 2 — Build from source
+
+Requires the [V compiler](https://vlang.io) 0.5.x and nothing else — the SQLite driver is vendored and `v.mod` declares zero external dependencies:
+
+```sh
 git clone https://github.com/Alex-hu/cmds.git
 cd cmds
+make prod        # equivalent to: v -prod -o cmds .
+```
 
-# Build production binary (checks dependencies automatically)
-make prod
-# Or directly compile with V:
-# v -prod -o cmds .
+---
 
-# Build initial index (takes ~5 seconds for ~3,500 commands)
-./cmds update
+## First Run
+
+Build the initial index (takes ~5 seconds for ~3,500 commands):
+
+```sh
+cmds update      # or ./cmds update if you built from source
 ```
 
 ---

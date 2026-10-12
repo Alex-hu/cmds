@@ -42,27 +42,38 @@
 
 ---
 
-## 快速开始
+## 安装
 
-### 1. 环境准备
+### 方式一：预编译二进制（推荐）
 
-- **V 语言编译器**：0.5.x（[安装指引](https://vlang.io)）
-- macOS（Apple Silicon 或 Intel）
-
-### 2. 构建与使用
+无需任何工具链，Apple Silicon 与 Intel 芯片均可：
 
 ```sh
-# 克隆仓库
+curl -fsSL https://github.com/Alex-hu/cmds/releases/latest/download/install.sh | bash
+```
+
+安装脚本会自动识别 CPU 架构（含 Rosetta 场景），安装前先校验 SHA-256，默认装入 `/usr/local/bin`（不可写时落 `~/.local/bin` 并提示配置 `$PATH`）。支持 `--version <tag>` 指定版本与 `--dest <dir>` 指定安装目录。
+
+也可从 [Releases](https://github.com/Alex-hu/cmds/releases) 手动下载 `macos-arm64` / `macos-x86_64` / `macos-universal` 压缩包，解压后把 `cmds` 放进任意 `$PATH` 目录。
+
+### 方式二：源码编译
+
+需要 [V 语言编译器](https://vlang.io) 0.5.x，此外零依赖——SQLite 驱动已内置，`v.mod` 未声明任何外部模块：
+
+```sh
 git clone https://github.com/Alex-hu/cmds.git
 cd cmds
+make prod        # 等价于：v -prod -o cmds .
+```
 
-# 编译生产二进制（工程化 Makefile，自动检查环境依赖）
-make prod
-# 或直接通过 V 编译：
-# v -prod -o cmds .
+---
 
-# 建立初始索引（索引约 3500 条命令仅需约 5 秒）
-./cmds update
+## 首次使用
+
+建立初始索引（索引约 3,500 条命令仅需约 5 秒）：
+
+```sh
+cmds update      # 源码编译的用户执行 ./cmds update
 ```
 
 ---
