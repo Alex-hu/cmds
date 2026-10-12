@@ -93,6 +93,7 @@ fn main() {
 
 ## 文档导航
 
+- [README.md](README.md) — 面向使用者的介绍与用法（与本文件分工：AGENTS.md 面向开发）。
 - [DESIGN.md](DESIGN.md) — 产品需求、来源分类学、数据模型、已确认决策。改数据层前必读。
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 模块分层、import 规则、关键机制、技术选型记录（ADR）。
 - [PLAN.md](PLAN.md) — 里程碑与任务拆解、验收标准、风险清单。

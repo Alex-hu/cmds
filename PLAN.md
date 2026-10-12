@@ -63,7 +63,7 @@
 ## M5 · 打磨
 
 1. `cmds dupes`（同名多来源清单）与 `cmds doctor`（PATH 重复项/死目录/被遮蔽命令/索引健康度）。
-2. README（面向使用者，与 AGENTS.md 分工：AGENTS.md 面向开发）。
+2. ~~README（面向使用者）~~ 已提前完成（M1 后）。
 3. `v -prod -o cmds .` 发布构建 + 实测冷启动时间；`cmds doctor` 自检通过。
 
 ## 风险与缓解
