@@ -130,14 +130,55 @@ pub:
 
 // render_view 渲染整个终端视口（Header + Tab栏 + Subtab栏 + Nushell表格 + 状态栏 + 弹窗）。
 pub fn render_view(state AppState, cols int, rows int) string {
-	mut sb := strings.new_builder(cols * rows * 2)
+	// 动态计算单屏展示行数 (page_size)
+	// 固定占用 9 行：标题(1) + 一级Tab(1) + 二级Tab(1) + 搜索(1) + 表格顶(1) + 表头(1) + 表格中(1) + 表格底(1) + 底栏(1)
+	page_size := if state.page_size > 0 {
+		state.page_size
+	} else {
+		if rows > 10 { rows - 9 } else { 1 }
+	}
 
-	// 光标复位到左上角 (1,1)
-	sb.write_string('\x1b[H')
+	// 动态计算各列宽度，确保总宽度不溢出 cols，防止终端折行破坏固定行高
+	avail := if cols > 20 { cols - 19 } else { 30 }
+	mut w_name := 20
+	mut w_src := 10
+	mut w_scope := 20
+	mut w_ver := 10
+	mut w_inst := 17
+	if cols < 110 {
+		w_name = 18
+		w_scope = 16
+		w_inst = 15
+	}
+	if cols < 95 {
+		w_name = 15
+		w_scope = 12
+		w_ver = 8
+		w_inst = 12
+	}
+	if cols < 80 {
+		w_name = 14
+		w_scope = 10
+		w_ver = 7
+		w_inst = 10
+	}
+	fixed_used := w_name + w_src + w_scope + w_ver + w_inst
+	w_desc := if avail > fixed_used + 10 { avail - fixed_used } else { 10 }
+
+	specs := [
+		TableColSpec{ title: 'NAME', width: w_name },
+		TableColSpec{ title: 'SOURCE', width: w_src },
+		TableColSpec{ title: 'SCOPE', width: w_scope },
+		TableColSpec{ title: 'VERSION', width: w_ver },
+		TableColSpec{ title: 'INSTALLED', width: w_inst },
+		TableColSpec{ title: 'DESCRIPTION / PATH', width: w_desc },
+	]
+
+	mut lines := []string{}
 
 	// 1. 顶部标题栏
 	banner := ' cmds · 命令行工具索引与查询 (按来源与环境分类)'
-	sb.write_string('${fg_accent}${ansi_bold}${pad_or_truncate(banner, cols)}${ansi_reset}\n')
+	lines << '${fg_accent}${ansi_bold}${pad_or_truncate(banner, cols)}${ansi_reset}'
 
 	// 2. 一级 Tab 栏
 	mut tab_line := strings.new_builder(256)
@@ -151,7 +192,7 @@ pub fn render_view(state AppState, cols int, rows int) string {
 			tab_line.write_string('${fg_gray} ${label} ${ansi_reset} ')
 		}
 	}
-	sb.write_string('${pad_or_truncate(tab_line.str(), cols)}\n')
+	lines << pad_or_truncate(tab_line.str(), cols)
 
 	// 3. 二级 Tab 栏（Scope）
 	cur_tab := state.tabs[state.active_tab_idx]
@@ -176,7 +217,7 @@ pub fn render_view(state AppState, cols int, rows int) string {
 	} else {
 		sub_line.write_string(' ${fg_dark}(该来源无二级分类)${ansi_reset}')
 	}
-	sb.write_string('${pad_or_truncate(sub_line.str(), cols)}\n')
+	lines << pad_or_truncate(sub_line.str(), cols)
 
 	// 4. 搜索行
 	mut search_line := strings.new_builder(128)
@@ -187,94 +228,86 @@ pub fn render_view(state AppState, cols int, rows int) string {
 	} else {
 		search_line.write_string(' ${fg_dark}提示: 按 / 开启实时搜索过滤${ansi_reset}')
 	}
-	sb.write_string('${pad_or_truncate(search_line.str(), cols)}\n')
+	lines << pad_or_truncate(search_line.str(), cols)
 
-	// 5. Nushell 风格表格
-	// 动态计算各列宽度
-	w_name := 20
-	w_src := 10
-	w_scope := 20
-	w_ver := 10
-	w_inst := 17
-	fixed_w := w_name + w_src + w_scope + w_ver + w_inst + 16 // 加上边框字符宽度
-	w_desc := if cols > fixed_w + 10 { cols - fixed_w - 2 } else { 20 }
+	// 5. Nushell 风格表格顶边、表头与中分线
+	lines << render_nushell_border_top(specs)
+	lines << render_nushell_header(specs)
+	lines << render_nushell_border_mid(specs)
 
-	specs := [
-		TableColSpec{ title: 'NAME', width: w_name },
-		TableColSpec{ title: 'SOURCE', width: w_src },
-		TableColSpec{ title: 'SCOPE', width: w_scope },
-		TableColSpec{ title: 'VERSION', width: w_ver },
-		TableColSpec{ title: 'INSTALLED', width: w_inst },
-		TableColSpec{ title: 'DESCRIPTION / PATH', width: w_desc },
-	]
-
-	// 顶边：╭────┬────╮
-	sb.write_string(render_nushell_border_top(specs))
-	sb.write_string('\n')
-
-	// 表头：│ NAME │ SOURCE │ ...
-	sb.write_string(render_nushell_header(specs))
-	sb.write_string('\n')
-
-	// 分隔中线：├────┼────┤
-	sb.write_string(render_nushell_border_mid(specs))
-	sb.write_string('\n')
-
-	// 数据可用行高
-	// 总高度 - Header(4) - TableHeader(3) - TableBottom(1) - Footer(2) = rows - 10
-	table_height := if rows > 12 { rows - 10 } else { 5 }
-
+	// 6. 数据行渲染（严格截取当前页条目，并以空行对齐保持总高恒定）
 	items := state.visible_entries
-	start_idx := state.scroll_offset
-	end_idx := if start_idx + table_height < items.len {
-		start_idx + table_height
-	} else {
-		items.len
-	}
+	page_start := state.page_start()
+	page_end := state.page_end()
 
 	if items.len == 0 {
-		empty_content := pad_or_truncate('  (无匹配命令)', w_name + w_src + w_scope + w_ver + w_inst + w_desc + 10)
-		sb.write_string('${fg_border}│${ansi_reset}${fg_gray}${empty_content}${ansi_reset}${fg_border}│${ansi_reset}\n')
-		for _ in 1 .. table_height {
-			sb.write_string(render_nushell_empty_row(specs))
-			sb.write_string('\n')
+		empty_content := pad_or_truncate('  (无匹配命令)', cols - 4)
+		lines << '${fg_border}│${ansi_reset}${fg_gray}${empty_content}${ansi_reset}${fg_border}│${ansi_reset}'
+		for _ in 1 .. page_size {
+			lines << render_nushell_empty_row(specs)
 		}
 	} else {
-		for i in start_idx .. end_idx {
+		for i in page_start .. page_end {
 			e := items[i]
 			is_sel := (i == state.cursor_idx)
-			sb.write_string(render_nushell_row(e, specs, is_sel))
-			sb.write_string('\n')
+			lines << render_nushell_row(e, specs, is_sel)
 		}
-		// 补齐空白行
-		for _ in (end_idx - start_idx) .. table_height {
-			sb.write_string(render_nushell_empty_row(specs))
-			sb.write_string('\n')
+		// 补齐空白行，确保即使数据不满一屏，底部与顶部也不会跳动
+		for _ in (page_end - page_start) .. page_size {
+			lines << render_nushell_empty_row(specs)
 		}
 	}
 
-	// 底边：╰────┴────╯
-	sb.write_string(render_nushell_border_bottom(specs))
-	sb.write_string('\n')
+	// 7. 底边
+	lines << render_nushell_border_bottom(specs)
 
-	// 6. 底栏按键提示
-	mut foot := strings.new_builder(256)
-	foot.write_string(' ${fg_accent}[Tab/⇧Tab]${ansi_reset} 来源  ')
-	foot.write_string('${fg_accent}[←/→]${ansi_reset} 环境  ')
-	foot.write_string('${fg_accent}[↑/↓/j/k]${ansi_reset} 移动  ')
-	foot.write_string('${fg_accent}[Enter]${ansi_reset} 详情  ')
-	foot.write_string('${fg_accent}[/]${ansi_reset} 搜索  ')
-	foot.write_string('${fg_accent}[q]${ansi_reset} 退出')
-	cur_num := if items.len > 0 { state.cursor_idx + 1 } else { 0 }
-	stat_msg := '${cur_num}/${items.len} 条'
-	rem := cols - term.printable_len(foot.str()) - stat_msg.len - 3
-	if rem > 0 {
-		foot.write_string(' '.repeat(rem))
+	// 8. 底栏按键提示与分页状态
+	left_str := ' ${fg_accent}[Tab]${ansi_reset} 来源 ' +
+		'${fg_accent}[←/→]${ansi_reset} 环境 ' +
+		'${fg_accent}[↑/↓]${ansi_reset} 移动 ' +
+		'${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页 ' +
+		'${fg_accent}[Enter]${ansi_reset} 详情 ' +
+		'${fg_accent}[/]${ansi_reset} 搜索 ' +
+		'${fg_accent}[q]${ansi_reset} 退出'
+
+	cur_p := state.current_page() + 1
+	tot_p := state.total_pages()
+	stat_msg := '第 ${cur_p}/${tot_p} 页 · ${page_size}条/屏 · 共 ${items.len} 条'
+
+	vis_left := term.printable_len(left_str)
+	vis_stat := term.printable_len(stat_msg)
+
+	mut foot_line := ''
+	if cols > vis_left + vis_stat + 2 {
+		gap := cols - vis_left - vis_stat - 1
+		foot_line = '${left_str}${' '.repeat(gap)}${fg_yellow}${stat_msg}${ansi_reset}'
+	} else if cols > vis_stat + 10 {
+		short_left := ' ${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页 ${fg_accent}[q]${ansi_reset} 退出'
+		vis_short := term.printable_len(short_left)
+		gap := if cols > vis_short + vis_stat { cols - vis_short - vis_stat - 1 } else { 1 }
+		foot_line = '${short_left}${' '.repeat(gap)}${fg_yellow}${stat_msg}${ansi_reset}'
+	} else {
+		foot_line = pad_or_truncate('${fg_yellow}${stat_msg}${ansi_reset}', cols)
 	}
-	foot.write_string('${fg_yellow}${stat_msg}${ansi_reset}')
-	sb.write_string('${foot.str()}\n')
+	lines << foot_line
 
-	// 7. 详情浮层（Modal / Sheet）
+	// 9. 组装整屏内容并严格保证行数不超过 rows
+	max_lines := if rows > 0 { rows } else { lines.len }
+	display_lines := if lines.len > max_lines { lines[..max_lines] } else { lines }
+
+	mut sb := strings.new_builder(cols * rows * 2)
+	sb.write_string('\x1b[H') // 光标归位至 (1, 1)
+
+	for idx, line in display_lines {
+		sb.write_string('\x1b[2K') // 清空整行防止上一帧残影
+		sb.write_string(line)
+		// 关键：最后一行绝不输出换行符，避免终端向上滚屏导致顶部 Header 滚出屏幕
+		if idx < display_lines.len - 1 {
+			sb.write_string('\r\n')
+		}
+	}
+
+	// 10. 详情浮层（居中覆盖）
 	if state.show_detail && items.len > 0 && state.cursor_idx < items.len {
 		cur_entry := items[state.cursor_idx]
 		sb.write_string(render_modal(cur_entry, cols, rows))

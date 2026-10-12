@@ -15,7 +15,7 @@ pub mut:
 	subtab_counts     map[string]int
 	visible_entries   []model.Entry
 	cursor_idx        int
-	scroll_offset     int
+	page_size         int
 	filter_text       string
 	searching         bool
 	show_detail       bool
@@ -27,6 +27,7 @@ pub fn new_app_state(entries []model.Entry) AppState {
 	mut state := AppState{
 		all_entries: entries
 		tabs:        tabs
+		page_size:   15
 	}
 	state.compute_tab_counts()
 	state.refresh_subtabs()
@@ -104,26 +105,124 @@ fn (mut s AppState) apply_filter() {
 	}
 
 	s.visible_entries = filtered
-	if s.cursor_idx >= s.visible_entries.len {
-		s.cursor_idx = if s.visible_entries.len > 0 { s.visible_entries.len - 1 } else { 0 }
-	}
-	if s.cursor_idx < 0 {
+	if s.visible_entries.len == 0 {
+		s.cursor_idx = 0
+	} else if s.cursor_idx >= s.visible_entries.len {
+		s.cursor_idx = s.visible_entries.len - 1
+	} else if s.cursor_idx < 0 {
 		s.cursor_idx = 0
 	}
-	s.adjust_scroll(20) // 预设行高，实际在主循环依据 rows 调整
 }
 
-// adjust_scroll 保证光标在视口范围内。
-fn (mut s AppState) adjust_scroll(table_height int) {
+// total_pages 计算当前筛选结果的总页数。
+pub fn (s AppState) total_pages() int {
 	if s.visible_entries.len == 0 {
-		s.scroll_offset = 0
+		return 1
+	}
+	ps := if s.page_size > 0 { s.page_size } else { 1 }
+	return (s.visible_entries.len + ps - 1) / ps
+}
+
+// current_page 计算当前光标所在的页码（0-indexed）。
+pub fn (s AppState) current_page() int {
+	ps := if s.page_size > 0 { s.page_size } else { 1 }
+	return s.cursor_idx / ps
+}
+
+// page_start 返回当前页第一条数据在 visible_entries 中的下标。
+pub fn (s AppState) page_start() int {
+	return s.current_page() * s.page_size
+}
+
+// page_end 返回当前页最后一条数据在 visible_entries 中的结束下标（开区间）。
+pub fn (s AppState) page_end() int {
+	end := s.page_start() + s.page_size
+	if end > s.visible_entries.len {
+		return s.visible_entries.len
+	}
+	return end
+}
+
+// next_page 翻到下一页（光标定在下一页首项）。
+pub fn (mut s AppState) next_page() {
+	if s.visible_entries.len == 0 {
 		return
 	}
-	if s.cursor_idx < s.scroll_offset {
-		s.scroll_offset = s.cursor_idx
+	tot := s.total_pages()
+	cur := s.current_page()
+	if cur + 1 < tot {
+		s.cursor_idx = (cur + 1) * s.page_size
+	} else {
+		s.cursor_idx = s.visible_entries.len - 1
 	}
-	if s.cursor_idx >= s.scroll_offset + table_height {
-		s.scroll_offset = s.cursor_idx - table_height + 1
+}
+
+// prev_page 翻到上一页（光标定在上一页首项）。
+pub fn (mut s AppState) prev_page() {
+	if s.visible_entries.len == 0 {
+		return
+	}
+	cur := s.current_page()
+	if cur > 0 {
+		s.cursor_idx = (cur - 1) * s.page_size
+	} else {
+		s.cursor_idx = 0
+	}
+}
+
+// move_down 光标向下移动一行，跨越页尾时自动进入下一页。
+pub fn (mut s AppState) move_down() {
+	if s.cursor_idx + 1 < s.visible_entries.len {
+		s.cursor_idx++
+	}
+}
+
+// move_up 光标向上移动一行，跨越页首时自动进入上一页。
+pub fn (mut s AppState) move_up() {
+	if s.cursor_idx > 0 {
+		s.cursor_idx--
+	}
+}
+
+// next_tab 切换到下一个一级 Tab，重置光标为第 1 页。
+pub fn (mut s AppState) next_tab() {
+	s.active_tab_idx = (s.active_tab_idx + 1) % s.tabs.len
+	s.refresh_subtabs()
+	s.cursor_idx = 0
+	s.apply_filter()
+}
+
+// prev_tab 切换到上一个一级 Tab，重置光标为第 1 页。
+pub fn (mut s AppState) prev_tab() {
+	s.active_tab_idx = if s.active_tab_idx == 0 {
+		s.tabs.len - 1
+	} else {
+		s.active_tab_idx - 1
+	}
+	s.refresh_subtabs()
+	s.cursor_idx = 0
+	s.apply_filter()
+}
+
+// next_subtab 切换到下一个二级 Subtab，重置光标为第 1 页。
+pub fn (mut s AppState) next_subtab() {
+	if s.subtabs.len > 1 {
+		s.active_subtab_idx = (s.active_subtab_idx + 1) % s.subtabs.len
+		s.cursor_idx = 0
+		s.apply_filter()
+	}
+}
+
+// prev_subtab 切换到上一个二级 Subtab，重置光标为第 1 页。
+pub fn (mut s AppState) prev_subtab() {
+	if s.subtabs.len > 1 {
+		s.active_subtab_idx = if s.active_subtab_idx == 0 {
+			s.subtabs.len - 1
+		} else {
+			s.active_subtab_idx - 1
+		}
+		s.cursor_idx = 0
+		s.apply_filter()
 	}
 }
 
@@ -141,11 +240,24 @@ pub fn run(entries []model.Entry) ! {
 	}
 
 	mut state := new_app_state(entries)
+	mut last_cols := 0
+	mut last_rows := 0
 
 	for {
 		cols, rows := term.get_terminal_size()
-		table_height := if rows > 12 { rows - 10 } else { 5 }
-		state.adjust_scroll(table_height)
+		if cols != last_cols || rows != last_rows {
+			last_cols = cols
+			last_rows = rows
+			print('\x1b[2J') // 终端大小变化时先全屏清理残留
+		}
+
+		// 根据屏幕高度动态计算单屏展示行数 (page_size)
+		// 9 行用于固定的标题栏、两层 Tab、搜索栏、表格边框及表头、底栏
+		state.page_size = if rows > 10 { rows - 9 } else { 1 }
+
+		if state.visible_entries.len > 0 && state.cursor_idx >= state.visible_entries.len {
+			state.cursor_idx = state.visible_entries.len - 1
+		}
 
 		// 渲染当前视口视图
 		view_str := render_view(state, cols, rows)
@@ -182,15 +294,12 @@ pub fn run(entries []model.Entry) ! {
 						runes := state.filter_text.runes()
 						state.filter_text = runes[..runes.len - 1].string()
 						state.cursor_idx = 0
-						state.scroll_offset = 0
 						state.apply_filter()
 					}
 				}
 				.char {
-					// 接收可打印字符
 					state.filter_text += action.ch.str()
 					state.cursor_idx = 0
-					state.scroll_offset = 0
 					state.apply_filter()
 				}
 				else {}
@@ -204,51 +313,35 @@ pub fn run(entries []model.Entry) ! {
 				break
 			}
 			.tab {
-				state.active_tab_idx = (state.active_tab_idx + 1) % state.tabs.len
-				state.refresh_subtabs()
-				state.cursor_idx = 0
-				state.scroll_offset = 0
-				state.apply_filter()
+				state.next_tab()
 			}
 			.shift_tab {
-				state.active_tab_idx = if state.active_tab_idx == 0 {
-					state.tabs.len - 1
-				} else {
-					state.active_tab_idx - 1
-				}
-				state.refresh_subtabs()
-				state.cursor_idx = 0
-				state.scroll_offset = 0
-				state.apply_filter()
+				state.prev_tab()
 			}
 			.right {
-				if state.subtabs.len > 1 {
-					state.active_subtab_idx = (state.active_subtab_idx + 1) % state.subtabs.len
-					state.cursor_idx = 0
-					state.scroll_offset = 0
-					state.apply_filter()
-				}
+				state.next_subtab()
 			}
 			.left {
-				if state.subtabs.len > 1 {
-					state.active_subtab_idx = if state.active_subtab_idx == 0 {
-						state.subtabs.len - 1
-					} else {
-						state.active_subtab_idx - 1
-					}
-					state.cursor_idx = 0
-					state.scroll_offset = 0
-					state.apply_filter()
-				}
+				state.prev_subtab()
 			}
 			.up {
-				if state.cursor_idx > 0 {
-					state.cursor_idx--
-				}
+				state.move_up()
 			}
 			.down {
-				if state.cursor_idx + 1 < state.visible_entries.len {
-					state.cursor_idx++
+				state.move_down()
+			}
+			.page_down {
+				state.next_page()
+			}
+			.page_up {
+				state.prev_page()
+			}
+			.home {
+				state.cursor_idx = 0
+			}
+			.end {
+				if state.visible_entries.len > 0 {
+					state.cursor_idx = state.visible_entries.len - 1
 				}
 			}
 			.enter {
@@ -260,7 +353,6 @@ pub fn run(entries []model.Entry) ! {
 				if state.filter_text.len > 0 {
 					state.filter_text = ''
 					state.cursor_idx = 0
-					state.scroll_offset = 0
 					state.apply_filter()
 				}
 			}
@@ -273,33 +365,29 @@ pub fn run(entries []model.Entry) ! {
 						state.searching = true
 					}
 					`j` {
-						if state.cursor_idx + 1 < state.visible_entries.len {
-							state.cursor_idx++
-						}
+						state.move_down()
 					}
 					`k` {
-						if state.cursor_idx > 0 {
-							state.cursor_idx--
-						}
+						state.move_up()
 					}
 					`h` {
-						if state.subtabs.len > 1 {
-							state.active_subtab_idx = if state.active_subtab_idx == 0 {
-								state.subtabs.len - 1
-							} else {
-								state.active_subtab_idx - 1
-							}
-							state.cursor_idx = 0
-							state.scroll_offset = 0
-							state.apply_filter()
-						}
+						state.prev_subtab()
 					}
 					`l` {
-						if state.subtabs.len > 1 {
-							state.active_subtab_idx = (state.active_subtab_idx + 1) % state.subtabs.len
-							state.cursor_idx = 0
-							state.scroll_offset = 0
-							state.apply_filter()
+						state.next_subtab()
+					}
+					`n`, `]`, `>`, ` ` {
+						state.next_page()
+					}
+					`p`, `[`, `<` {
+						state.prev_page()
+					}
+					`g` {
+						state.cursor_idx = 0
+					}
+					`G` {
+						if state.visible_entries.len > 0 {
+							state.cursor_idx = state.visible_entries.len - 1
 						}
 					}
 					else {}

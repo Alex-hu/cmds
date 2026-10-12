@@ -17,6 +17,10 @@ pub enum KeyType {
 	down
 	left
 	right
+	page_up
+	page_down
+	home
+	end
 	enter
 	escape
 	backspace
@@ -37,7 +41,7 @@ mut:
 	active       bool
 }
 
-// enable 开启终端 Raw 模式、进入备用屏幕并隐藏光标。
+// enable 开启终端 Raw 模式、进入备用屏幕、隐藏光标并禁用自动折行（防止滚屏破坏顶部固定头）。
 pub fn (mut g TerminalRawGuard) enable() ! {
 	if termios.tcgetattr(0, mut g.orig_termios) != 0 {
 		return error('tcgetattr 失败')
@@ -52,8 +56,8 @@ pub fn (mut g TerminalRawGuard) enable() ! {
 		return error('tcsetattr raw 失败')
 	}
 	g.active = true
-	// 切换到备用屏幕 (Alternate Screen) 并隐藏光标
-	print('\x1b[?1049h\x1b[?25l')
+	// 切换到备用屏幕 (1049h), 隐藏光标 (25l), 禁用自动折行 (7l), 清空全屏 (2J)
+	print('\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J')
 	flush_stdout()
 }
 
@@ -62,8 +66,8 @@ pub fn (mut g TerminalRawGuard) disable() {
 	if !g.active {
 		return
 	}
-	// 切回主屏幕并恢复显示光标
-	print('\x1b[?1049l\x1b[?25h')
+	// 恢复自动折行 (7h), 恢复显示光标 (25h), 切回主屏幕 (1049l)
+	print('\x1b[?7h\x1b[?25h\x1b[?1049l')
 	flush_stdout()
 	termios.tcsetattr(0, C.TCSANOW, mut g.orig_termios)
 	g.active = false
@@ -78,8 +82,14 @@ pub fn read_key() KeyAction {
 	}
 
 	match b {
+		2 { // Ctrl+B (PageUp)
+			return KeyAction{ typ: .page_up }
+		}
 		3 { // Ctrl+C
 			return KeyAction{ typ: .quit }
+		}
+		6 { // Ctrl+F (PageDown)
+			return KeyAction{ typ: .page_down }
 		}
 		9 { // Tab
 			return KeyAction{ typ: .tab }
@@ -108,18 +118,39 @@ pub fn read_key() KeyAction {
 					`B` { return KeyAction{ typ: .down } }
 					`C` { return KeyAction{ typ: .right } }
 					`D` { return KeyAction{ typ: .left } }
+					`H` { return KeyAction{ typ: .home } }
+					`F` { return KeyAction{ typ: .end } }
 					`Z` { return KeyAction{ typ: .shift_tab } }
 					`1`...`9` {
 						// 类似 \x1b[5~ (PageUp), \x1b[6~ (PageDown)
+						mut b4 := u8(0)
 						if os.fd_is_pending(0) {
-							mut b4 := u8(0)
 							unsafe { C.read(0, &b4, 1) }
+						}
+						if b4 == `~` {
+							match b3 {
+								`5` { return KeyAction{ typ: .page_up } }
+								`6` { return KeyAction{ typ: .page_down } }
+								`1`, `7` { return KeyAction{ typ: .home } }
+								`4`, `8` { return KeyAction{ typ: .end } }
+								else {}
+							}
 						}
 						return KeyAction{ typ: .unknown }
 					}
 					else {
 						return KeyAction{ typ: .unknown }
 					}
+				}
+			} else if b2 == `O` {
+				mut b3 := u8(0)
+				if unsafe { C.read(0, &b3, 1) } <= 0 {
+					return KeyAction{ typ: .escape }
+				}
+				match b3 {
+					`H` { return KeyAction{ typ: .home } }
+					`F` { return KeyAction{ typ: .end } }
+					else { return KeyAction{ typ: .unknown } }
 				}
 			}
 			return KeyAction{ typ: .escape }

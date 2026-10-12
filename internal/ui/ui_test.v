@@ -132,13 +132,74 @@ fn test_app_state_search_filter() {
 	assert st.visible_entries.len == 5
 }
 
-fn test_scroll_adjustment() {
+fn test_pagination_and_navigation() {
+	entries := mock_entries() // 5 entries
+	mut st := new_app_state(entries)
+	st.page_size = 2 // 每页 2 条，总共 5 条应当有 3 页
+
+	assert st.total_pages() == 3
+	assert st.current_page() == 0
+	assert st.page_start() == 0
+	assert st.page_end() == 2
+
+	// 翻到下一页 (Page 2, index 2..4)
+	st.next_page()
+	assert st.current_page() == 1
+	assert st.cursor_idx == 2
+	assert st.page_start() == 2
+	assert st.page_end() == 4
+
+	// 再翻到下一页 (Page 3, index 4..5)
+	st.next_page()
+	assert st.current_page() == 2
+	assert st.cursor_idx == 4
+	assert st.page_start() == 4
+	assert st.page_end() == 5
+
+	// 已经在最后一页，再次 next_page 不越界
+	st.next_page()
+	assert st.current_page() == 2
+	assert st.cursor_idx == 4
+
+	// 翻回上一页 (Page 2)
+	st.prev_page()
+	assert st.current_page() == 1
+	assert st.cursor_idx == 2
+
+	// 单行向下移动跨页测试：
+	// 当前在 index 2，按 down 到 index 3（仍是 Page 2）
+	st.move_down()
+	assert st.cursor_idx == 3
+	assert st.current_page() == 1
+	// 再按 down 到 index 4（自动跨入 Page 3）
+	st.move_down()
+	assert st.cursor_idx == 4
+	assert st.current_page() == 2
+
+	// 单行向上移动跨页测试：
+	// 从 index 4 按 up 到 index 3（自动退回 Page 2）
+	st.move_up()
+	assert st.cursor_idx == 3
+	assert st.current_page() == 1
+}
+
+fn test_render_view_no_trailing_newline_and_fixed_header() {
 	entries := mock_entries()
 	mut st := new_app_state(entries)
+	cols := 100
+	rows := 24
+	st.page_size = rows - 9 // 15
 
-	st.cursor_idx = 4
-	st.adjust_scroll(3)
-	// 当可视高度为 3，光标在 4 时，滚动偏移量应当上移到保证光标可见
-	assert st.scroll_offset >= 2
-	assert st.cursor_idx < st.scroll_offset + 3
+	view := render_view(st, cols, rows)
+	// 验证光标从 (1,1) 开始
+	assert view.starts_with('\x1b[H')
+	// 验证末尾没有多余换行符（防止末行换行触发终端向下滚屏）
+	assert !view.ends_with('\n')
+	assert !view.ends_with('\r')
+	// 验证包含头部 Banner 与 Tab 元素
+	assert view.contains('cmds · 命令行工具索引与查询')
+	assert view.contains('All')
+	assert view.contains('conda')
+	// 验证包含底部分页信息
+	assert view.contains('第 1/1 页')
 }
