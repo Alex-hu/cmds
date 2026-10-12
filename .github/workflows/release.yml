@@ -1,0 +1,88 @@
+# 发布流水线：打 v* tag 触发，在单个 arm64 macOS runner 上产出
+# arm64 / x86_64 / universal 三种产物并挂到 GitHub Release。
+#
+# 交叉编译依据：-arch 交叉与 lipo 合成已在本地 V 0.5.2 实测可用；
+# 系统依赖只有 SDK 自带的 libsqlite3（双架构），无需额外工具链。
+# 也可在 Actions 页面手动触发（workflow_dispatch）做干跑：只构建并
+# 上传 artifact，不创建 Release。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release 创建/上传资产需要
+
+env:
+  # 与本地开发环境完全一致的 V 版本（小版本间存在破坏性变更，勿随手升级；
+  # 升级前先在本地跑通 v test . 再改这里）
+  V_COMMIT: 81be246 # V 0.5.2
+
+jobs:
+  build-macos:
+    runs-on: macos-latest # arm64 runner；x86_64 产物由 -arch x64 交叉编译获得
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V (pinned commit)
+        run: |
+          git clone https://github.com/vlang/v "$HOME/vlang"
+          git -C "$HOME/vlang" checkout "$V_COMMIT"
+          make -C "$HOME/vlang"
+          echo "$HOME/vlang" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: v version
+
+      - name: Test
+        run: v test .
+
+      - name: Build (arm64 / x86_64 / universal)
+        run: |
+          mkdir -p build
+          v -prod -arch arm64 -o build/cmds-arm64 .
+          v -prod -arch x64 -o build/cmds-x86_64 .
+          lipo -create build/cmds-arm64 build/cmds-x86_64 -output build/cmds-universal
+          file build/*
+          # arm64 与 runner 同架构，冒烟验证；x86_64 依赖本地 spike 结论
+          ./build/cmds-arm64 version
+
+      # 产物名形如 cmds-v0.1.0-macos-arm64.tar.gz，install.sh 按此命名约定下载。
+      # 包内文件统一叫 cmds；.sha256 在 dist 目录内生成，保证校验时路径匹配。
+      - name: Package
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dist stage
+          cp README.md stage/
+          for arch in arm64 x86_64 universal; do
+            cp "build/cmds-${arch}" stage/cmds
+            tar -czf "dist/cmds-${TAG}-macos-${arch}.tar.gz" -C stage cmds README.md
+            rm stage/cmds
+          done
+          rm -r stage
+          cd dist
+          for f in *.tar.gz; do
+            shasum -a 256 "$f" > "$f.sha256"
+          done
+          ls -la
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmds-macos-${{ github.ref_name }}
+          path: dist/
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # 重跑同 tag 时 release 已存在，退化为覆盖上传资产
+          gh release create "$TAG" dist/*.tar.gz dist/*.sha256 \
+            --generate-notes --verify-tag \
+            || gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber
