@@ -51,6 +51,10 @@ mockups/            # 交互原型（A2 定稿）
 - 优先用标准库（os、flag、strings、strconv、time、json）；引入第三方前先确认 std 无等价物。
 - 平台差异用编译期分支 `$if macos { }` / `$if windows { }`，不用运行时判断；路径拼接用 `os.join_path`。
 
+## Git 提交身份
+
+本仓库（GitHub）用个人身份 `Alex-hu <Alex-hu@users.noreply.github.com>`，已通过仓库级 `.git/config` + 用户级 `includeIf`（按远程 URL 切换，`~/.gitconfig-github`）设置，**提交时直接 `git commit`，不要加 `-c user.*` 覆盖**。工作仓库（gitlab.17usoft.com）不受影响，仍走全局工作身份。
+
 ## CLI 设计规范
 
 - 参数解析一律用 std `flag` 模块；`-h/--help` 和 `--version` 由 flag 自动生成，不要手写。每个 flag 必须带 usage 描述。
