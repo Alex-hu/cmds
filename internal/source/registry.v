@@ -3,8 +3,9 @@ module source
 // all_sources 按归因轮询顺序（priority 升序）构造全部已注册来源。
 // ManualSource 是兜底源，需要其余源的 roots 来计算自己的 roots，因此最后构造。
 pub fn all_sources() []Source {
-	mut srcs := []Source{cap: 9}
+	mut srcs := []Source{cap: 10}
 	srcs << new_npm_source()
+	srcs << new_pnpm_source()
 	srcs << new_brew_source()
 	srcs << new_conda_source()
 	srcs << new_cargo_source()

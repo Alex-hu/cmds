@@ -8,7 +8,7 @@ import os
 // list_cmd 从索引读取并打印命令清单（支持 Nushell 风格静态表格与交互式 Tab 浏览器）。
 fn list_cmd(ctx Context, args []string) ! {
 	mut fp := flag_parser_for('list', args)
-	src := fp.string('source', `s`, '', '按来源过滤：brew/npm/conda/cargo/go/rvm/app/system/manual')
+	src := fp.string('source', `s`, '', '按来源过滤：brew/npm/pnpm/conda/cargo/go/rvm/app/system/manual')
 	scope := fp.string('scope', 0, '', '按二级分类过滤（conda 环境名 / node 版本标识）')
 	interactive := fp.bool('interactive', `i`, false, '启动交互式 Tab 浏览器 (原型 A2)')
 	plain := fp.bool('plain', `p`, false, '强制输出无交互的 Nushell 边框表格')

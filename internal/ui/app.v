@@ -25,13 +25,33 @@ pub mut:
 
 // new_app_state 初始化交互状态。
 pub fn new_app_state(entries []model.Entry) AppState {
-	tabs := ['all', 'system', 'brew', 'npm', 'conda', 'cargo', 'go', 'rvm', 'app', 'manual']
+	candidate_tabs := ['all', 'system', 'brew', 'npm', 'pnpm', 'conda', 'cargo', 'go', 'rvm', 'app',
+		'manual']
 	mut state := AppState{
 		all_entries: entries
-		tabs:        tabs
 		page_size:   15
 	}
 	state.compute_tab_counts()
+
+	// 过滤顶层 Tab：除 'all' 外，仅保留命令数量 > 0 的 Tab
+	mut active_tabs := []string{}
+	for t in candidate_tabs {
+		if t == 'all' {
+			active_tabs << t
+		} else if (state.tab_counts[t] or { 0 }) > 0 {
+			active_tabs << t
+		}
+	}
+	for e in entries {
+		if e.source !in candidate_tabs && e.source !in active_tabs && (state.tab_counts[e.source] or { 0 }) > 0 {
+			active_tabs << e.source
+		}
+	}
+	if active_tabs.len == 0 {
+		active_tabs << 'all'
+	}
+	state.tabs = active_tabs
+
 	state.refresh_subtabs()
 	state.apply_filter()
 	return state

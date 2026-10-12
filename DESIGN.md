@@ -26,7 +26,8 @@
 | node | 每个 node 安装本体 bin + 其 npm 全局包 bin；node 安装发现自：brew Cellar、`~/.local/share/fnm/node-versions/*/installation`、`~/.nvm/versions/node/*` | `node@brew`、`node@fnm/v22.12.0`、`node@nvm/v24.3.0`；npm 包为 `npm@fnm/v22.12.0` 等 |
 | conda | `~/anaconda3`、`~/miniforge3`（+ `~/miniconda3`）的 base 与 `envs/*/bin` | `conda:miniforge3/base`、`conda:miniforge3/envs/ml` |
 | cargo | `~/.cargo/bin` | `cargo` |
-| go | `$GOPATH/bin`（默认 `~/go/bin`） | `go` |
+| pnpm | `$PNPM_HOME`（默认 macOS `~/Library/pnpm`、Linux `~/.local/share/pnpm`） | `pnpm` |
+| go | `$GOPATH/bin`、$GOBIN、$GOROOT/bin（如 `/usr/local/go/bin`） | `go` |
 | rvm | `~/.rvm/bin` | `rvm` |
 | app | PATH 中位于 `*.app` bundle 内的目录 | `app:ZCode`（取 bundle 名） |
 | manual | PATH 中其余无法归因的目录 | `manual` |
@@ -39,7 +40,7 @@
 create table entries (
   id           integer primary key,
   name         text not null,
-  source       text not null,          -- system|brew|npm|conda|cargo|go|rvm|app|manual
+  source       text not null,          -- system|brew|npm|pnpm|conda|cargo|go|rvm|app|manual
   origin       text not null,          -- 例: conda:miniforge3/envs/ml / npm@fnm/v22.12.0
   scope        text,                   -- 二级分类键：conda→环境名，npm→node 安装标识；其余为 NULL
   realpath     text not null,
@@ -67,8 +68,8 @@ create table meta (key text primary key, value text);  -- schema_version/built_a
 
 ## 归因与富化算法
 
-1. **归因**：解析符号链接到真实路径 → 按真实路径前缀匹配来源根（Cellar → brew；`node_modules/<pkg>` → npm；pipx venv → pipx…）。PATH 目录本身也做一次目录级映射（`~/.cargo/bin` → cargo）。
-2. **富化（全部离线）**：brew 用 `brew list --versions` + `brew info --json=v2`（含描述）；npm 读 `node_modules/<pkg>/package.json`（name/version/description）；cargo 读 `~/.cargo/.crates2.json`（bin→crate 版本）；go 用 `go version -m <二进制>` 读内嵌构建信息（不执行二进制）；conda 读 `envs/<env>/conda-meta/*.json`；系统命令描述用 `whatis`（man 数据库）。
+1. **归因**：解析符号链接到真实路径 → 按真实路径前缀匹配来源根（Cellar → brew；`node_modules/<pkg>` → npm；`$PNPM_HOME` → pnpm；pipx venv → pipx…）。PATH 目录本身也做一次目录级映射（`~/.cargo/bin` → cargo）。
+2. **富化（全部离线）**：brew 用 `brew list --versions` + `brew info --json=v2`（含描述）；npm 读 `node_modules/<pkg>/package.json`（name/version/description）；pnpm 读 `global/*/node_modules/<pkg>/package.json` 或包装脚本；cargo 读 `~/.cargo/.crates2.json`（bin→crate 版本）；go 用 `go version -m <二进制>` 读工具链与内嵌构建信息（不执行二进制）；conda 读 `envs/<env>/conda-meta/*.json`；系统命令描述用 `whatis`（man 数据库）。
 3. **deep 探测（`--deep`）**：仅对 version 仍缺失的 entry 并行执行 `<cmd> --version|-V|version`：8 并发、单命令 2s 超时、关闭 stdin、内置跳过名单（vi/ssh/sudo/shell 类），结果写回索引。
 
 ## CLI 命令面

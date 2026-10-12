@@ -54,18 +54,19 @@ fn test_helpers() {
 	assert s[4] == `-` && s[7] == `-` && s[10] == ` ` && s[13] == `:`
 }
 
-// test_interface_conformance 五源实现 Source 接口：id/label/priority 全部符合约定。
+// test_interface_conformance 六源实现 Source 接口：id/label/priority 全部符合约定。
 fn test_interface_conformance() {
-	mut sources := []Source{cap: 5}
+	mut sources := []Source{cap: 6}
 	sources << BrewSource{}
 	sources << NpmSource{}
+	sources << PnpmSource{}
 	sources << CondaSource{}
 	sources << CargoSource{}
 	sources << GoSource{}
-	assert sources.len == 5
-	assert sources.map(it.id()) == ['brew', 'npm', 'conda', 'cargo', 'go']
-	assert sources.map(it.priority()) == [10, 5, 30, 40, 50]
-	assert sources.map(it.label()) == ['Homebrew', 'npm', 'conda', 'cargo', 'Go']
+	assert sources.len == 6
+	assert sources.map(it.id()) == ['brew', 'npm', 'pnpm', 'conda', 'cargo', 'go']
+	assert sources.map(it.priority()) == [10, 5, 7, 30, 40, 50]
+	assert sources.map(it.label()) == ['Homebrew', 'npm', 'pnpm', 'conda', 'cargo', 'Go']
 	// 经接口调用 enrich（空列表）不应报错
 	mut es := []model.Entry{}
 	for src in sources {
@@ -361,7 +362,9 @@ fn test_cargo_attribute_and_enrich() {
 fn test_go_attribute_and_enrich() {
 	root := fixture_root('go')
 	mkfake_exec(os.join_path(root, 'bin', 'dlv'))
-	src := GoSource{ root: os.join_path(root, 'bin') }
+	src := GoSource{
+		roots: [os.join_path(root, 'bin')]
+	}
 	assert src.id() == 'go' && src.priority() == 50 && src.label() == 'Go'
 	assert src.roots() == [os.join_path(root, 'bin')]
 	assert src.scopes().len == 0
@@ -374,8 +377,17 @@ fn test_go_attribute_and_enrich() {
 	// enrich：fixture 二进制非 Go 产物 → 无 mod 行 → version 留空且不报错
 	// （真机有 go 时逐条调用返回无 mod 行；无 go 时整体跳过；两种环境下断言一致）
 	mut entries := []model.Entry{}
-	entries << model.Entry{ name: 'dlv', source: 'go', origin: 'go', realpath: os.join_path(root, 'bin', 'dlv') }
-	entries << model.Entry{ name: 'ls', source: 'system', realpath: '/usr/bin/ls' }
+	entries << model.Entry{
+		name:     'dlv'
+		source:   'go'
+		origin:   'go'
+		realpath: os.join_path(root, 'bin', 'dlv')
+	}
+	entries << model.Entry{
+		name:     'ls'
+		source:   'system'
+		realpath: '/usr/bin/ls'
+	}
 	src.enrich(mut entries) or {
 		assert false
 		return
@@ -385,4 +397,56 @@ fn test_go_attribute_and_enrich() {
 	empty := GoSource{}
 	assert empty.roots() == []
 	assert_none_attr(empty.attribute(os.join_path(root, 'bin', 'dlv')))
+}
+
+// test_pnpm_attribute_and_enrich 假 pnpm fixture：归因与从 package.json 提取元数据。
+fn test_pnpm_attribute_and_enrich() {
+	root := fixture_root('pnpm')
+	pnpm_home := os.join_path(root, 'pnpm_home')
+	mkfake_exec(os.join_path(pnpm_home, 'appium'))
+	mkfake_exec(os.join_path(pnpm_home, 'ports'))
+	global_5 := os.join_path(pnpm_home, 'global', '5', 'node_modules')
+	mkfile(os.join_path(global_5, 'appium', 'package.json'), '{"name":"appium","version":"3.1.2","description":"Automation for Apps.","bin":"index.js"}')
+	mkfile(os.join_path(global_5, 'port-whisperer', 'package.json'), '{"name":"port-whisperer","version":"1.3.0","description":"Port viewer","bin":{"ports":"./bin.js"}}')
+
+	src := PnpmSource{
+		root:       pnpm_home
+		global_dir: os.join_path(pnpm_home, 'global')
+	}
+	assert src.id() == 'pnpm' && src.priority() == 7 && src.label() == 'pnpm'
+	assert src.roots() == [pnpm_home]
+	assert src.scopes().len == 0
+
+	a := src.attribute(os.join_path(pnpm_home, 'appium')) or {
+		assert false
+		return
+	}
+	assert a.source == 'pnpm' && a.origin == 'pnpm' && a.scope == ''
+	assert_none_attr(src.attribute('/usr/local/bin/git'))
+
+	mut entries := []model.Entry{}
+	entries << model.Entry{
+		name:     'appium'
+		source:   'pnpm'
+		origin:   'pnpm'
+		realpath: os.join_path(pnpm_home, 'appium')
+	}
+	entries << model.Entry{
+		name:     'ports'
+		source:   'pnpm'
+		origin:   'pnpm'
+		realpath: os.join_path(pnpm_home, 'ports')
+	}
+	src.enrich(mut entries) or {
+		assert false
+		return
+	}
+	assert entries[0].version == '3.1.2'
+	assert entries[0].description == 'Automation for Apps.'
+	assert entries[1].version == '1.3.0'
+	assert entries[1].description == 'Port viewer'
+
+	empty := PnpmSource{}
+	assert empty.roots() == []
+	assert_none_attr(empty.attribute(os.join_path(pnpm_home, 'appium')))
 }

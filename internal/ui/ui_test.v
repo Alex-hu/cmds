@@ -86,15 +86,20 @@ fn test_app_state_tabs_and_subtabs() {
 	entries := mock_entries()
 	mut st := new_app_state(entries)
 
-	// 初始状态
+	// 初始状态：验证 0 个命令的顶层 tab（cargo/go/pnpm/rvm 等）被自动过滤
 	assert st.tabs[st.active_tab_idx] == 'all'
+	assert st.tabs == ['all', 'system', 'brew', 'npm', 'conda']
+	assert 'cargo' !in st.tabs
+	assert 'go' !in st.tabs
+	assert 'pnpm' !in st.tabs
 	assert st.visible_entries.len == 5
 	assert st.tab_counts['all'] == 5
 	assert st.tab_counts['conda'] == 2
 	assert st.tab_counts['npm'] == 1
 
-	// 切换到 conda 一级 tab（索引为 4）
-	st.active_tab_idx = 4
+	// 切换到 conda 一级 tab
+	conda_idx := st.tabs.index('conda')
+	st.active_tab_idx = conda_idx
 	assert st.tabs[st.active_tab_idx] == 'conda'
 	st.refresh_subtabs()
 	st.apply_filter()

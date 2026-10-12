@@ -62,6 +62,7 @@ fn source_color(s string) string {
 		'system' { return '\x1b[38;5;103m' }
 		'brew' { return '\x1b[38;5;178m' }
 		'npm' { return '\x1b[38;5;71m' }
+		'pnpm' { return '\x1b[38;5;215m' }
 		'conda' { return '\x1b[38;5;73m' }
 		'cargo' { return '\x1b[38;5;173m' }
 		'go' { return '\x1b[38;5;75m' }
@@ -79,6 +80,7 @@ fn source_display_name(s string) string {
 		'system' { return '系统' }
 		'brew' { return 'brew' }
 		'npm' { return 'node/npm' }
+		'pnpm' { return 'pnpm' }
 		'conda' { return 'conda' }
 		'cargo' { return 'cargo' }
 		'go' { return 'go' }

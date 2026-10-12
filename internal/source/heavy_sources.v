@@ -634,26 +634,82 @@ pub fn (s CargoSource) enrich(mut entries []model.Entry) ! {
 	}
 }
 
-// ---------- GoSource：go install ----------
+// ---------- GoSource：go install 与 Go 工具链 ----------
 
-// GoSource 覆盖 `go install` 装到 $GOPATH/bin 的命令。scope 无二级分类。
+// GoSource 覆盖 `go install` 装到 $GOPATH/bin、$GOBIN 的命令以及 $GOROOT/bin（/usr/local/go/bin 等）工具链命令。scope 无二级分类。
 pub struct GoSource {
 pub mut:
-	root string // $GOPATH/bin（默认 ~/go/bin）
+	roots []string // $GOBIN, $GOPATH/bin, $GOROOT/bin
 }
 
-// new_go_source 发现 GOPATH 环境变量（优先）或 ~/go 下的 bin，存在则构造 GoSource。
+// new_go_source 发现 Go 的可执行目录（$GOBIN, $GOPATH/bin, $GOROOT/bin 及标准安装目录）。
 pub fn new_go_source() GoSource {
+	mut roots := []string{}
+
+	// 1. $GOBIN
+	gobin := os.getenv('GOBIN')
+	if gobin != '' && os.is_dir(gobin) && gobin !in roots {
+		roots << gobin
+	}
+
+	// 2. $GOPATH/bin（若无 GOPATH 环境变量则探测 ~/go/bin）
 	mut gopath := os.getenv('GOPATH')
 	if gopath == '' {
 		gopath = os.join_path(os.home_dir(), 'go')
 	}
-	bin := os.join_path(gopath, 'bin')
-	mut s := GoSource{}
-	if os.is_dir(bin) {
-		s.root = bin
+	for p in gopath.split(':') {
+		if p != '' {
+			bin := os.join_path(p, 'bin')
+			if os.is_dir(bin) && bin !in roots {
+				roots << bin
+			}
+		}
 	}
-	return s
+
+	// 3. $GOROOT/bin
+	goroot := os.getenv('GOROOT')
+	if goroot != '' {
+		bin := os.join_path(goroot, 'bin')
+		if os.is_dir(bin) && bin !in roots {
+			roots << bin
+		}
+	}
+
+	// 4. 标准 macOS / Linux 安装路径
+	for cand in ['/usr/local/go', '/opt/homebrew/opt/go/libexec', '/usr/lib/go'] {
+		bin := os.join_path(cand, 'bin')
+		if os.is_dir(bin) && bin !in roots {
+			roots << bin
+		}
+	}
+
+	// 5. 若系统已有 go 命令，通过 go env 动态补齐 GOROOT 与 GOPATH
+	probe_root := os.exec(['go', 'env', 'GOROOT'])
+	if probe_root.exit_code == 0 {
+		g_root := probe_root.output.trim_space()
+		if g_root != '' {
+			bin := os.join_path(g_root, 'bin')
+			if os.is_dir(bin) && bin !in roots {
+				roots << bin
+			}
+		}
+	}
+	probe_path := os.exec(['go', 'env', 'GOPATH'])
+	if probe_path.exit_code == 0 {
+		g_path := probe_path.output.trim_space()
+		if g_path != '' {
+			for p in g_path.split(':') {
+				bin := os.join_path(p, 'bin')
+				if os.is_dir(bin) && bin !in roots {
+					roots << bin
+				}
+			}
+		}
+	}
+
+	return GoSource{
+		roots: roots
+	}
 }
 
 // id 实现 Source 接口：源标识 'go'。
@@ -671,18 +727,27 @@ pub fn (s GoSource) priority() int {
 	return 50
 }
 
-// roots 实现 Source 接口：$GOPATH/bin（存在才算）。
+// roots 实现 Source 接口：全部 Go bin 目录（存在才算）。
 pub fn (s GoSource) roots() []string {
-	if s.root != '' && os.is_dir(s.root) {
-		return [s.root]
+	mut out := []string{}
+	for r in s.roots {
+		if r != '' && os.is_dir(r) && r !in out {
+			out << r
+		}
 	}
-	return []string{}
+	return out
 }
 
-// attribute 实现 Source 接口：位于 $GOPATH/bin 下 → {'go', 'go', ''}。
+// attribute 实现 Source 接口：位于任一 Go bin 目录下 → {'go', 'go', ''}。
 pub fn (s GoSource) attribute(realpath string) ?Attribution {
-	if under_dir(realpath, s.root) {
-		return Attribution{ source: 'go', origin: 'go', scope: '' }
+	for r in s.roots {
+		if under_dir(realpath, r) {
+			return Attribution{
+				source: 'go'
+				origin: 'go'
+				scope:  ''
+			}
+		}
 	}
 	return none
 }
@@ -693,10 +758,12 @@ pub fn (s GoSource) scopes() []Scope {
 }
 
 // enrich 实现 Source 接口：逐 entry 执行 `go version -m <realpath>`（不执行被索引的
-// 二进制本身），输出中 'mod\t<module路径>\t<版本>' 行给出 version 与 description；
-// 非 Go 二进制（命令失败或无 mod 行）静默跳过；go 命令不存在则整体跳过。
+// 二进制本身），输出中：
+// 1. 标准 Go 工具链二进制（如 go, gofmt）：首行含 ': go<version>'，'path\tcmd/<tool>'；
+// 2. go install 模块：'mod\t<module路径>\t<版本>'；
+// 非 Go 二进制（命令失败或无匹配行）静默跳过；go 命令不存在则整体跳过。
 pub fn (s GoSource) enrich(mut entries []model.Entry) ! {
-	if s.root == '' {
+	if s.roots.len == 0 {
 		return
 	}
 	// go 不可用（命令不存在）时整体跳过，避免逐条空跑
@@ -712,15 +779,214 @@ pub fn (s GoSource) enrich(mut entries []model.Entry) ! {
 		if res.exit_code != 0 {
 			continue
 		}
-		for line in res.output.split_into_lines() {
+		lines := res.output.split_into_lines()
+		if lines.len == 0 {
+			continue
+		}
+		first_line := lines[0]
+		if first_line.contains(': go') {
+			parts := first_line.split(': go')
+			if parts.len >= 2 {
+				e.version = parts[1].trim_space()
+			}
+		}
+		for line in lines {
 			l := line.trim_left('\t')
-			if !l.starts_with('mod\t') {
+			if l.starts_with('mod\t') {
+				f := l.split('\t')
+				if f.len >= 3 {
+					e.version = f[2]
+					e.description = f[1]
+				}
+			} else if l.starts_with('path\t') {
+				f := l.split('\t')
+				if f.len >= 2 && e.description == '' {
+					if e.name == 'go' {
+						e.description = 'Go toolchain binary'
+					} else if e.name == 'gofmt' {
+						e.description = 'Go code formatter'
+					} else {
+						e.description = f[1]
+					}
+				}
+			}
+		}
+	}
+}
+
+// ---------- PnpmSource：pnpm 全局安装 ----------
+
+// PnpmPkgJson 是 pnpm 包 package.json 的关键字段。
+struct PnpmPkgJson {
+	name        string
+	version     string
+	description string
+	bin         json2.Any
+}
+
+// PkgMetadata 保存二进制包的提取版本与描述。
+struct PkgMetadata {
+	version     string
+	description string
+}
+
+// parse_pnpm_pkg_json 解析 pnpm 的 package.json 并提取 bin 映射。
+fn parse_pnpm_pkg_json(path string, mut m map[string]PkgMetadata) {
+	if !os.is_file(path) {
+		return
+	}
+	content := os.read_file(path) or { return }
+	pkg := json2.decode[PnpmPkgJson](content) or { return }
+	if pkg.name == '' {
+		return
+	}
+	def_name := pkg.name.all_after_last('/')
+	meta := PkgMetadata{
+		version:     pkg.version
+		description: pkg.description
+	}
+	m[def_name] = meta
+	match pkg.bin {
+		string {
+			m[def_name] = meta
+		}
+		map[string]json2.Any {
+			for k, _ in pkg.bin {
+				m[k] = meta
+			}
+		}
+		else {}
+	}
+}
+
+// PnpmSource 覆盖 `pnpm add -g` 安装到 $PNPM_HOME（默认 macOS 为 ~/Library/pnpm）的命令。scope 无二级分类。
+pub struct PnpmSource {
+pub mut:
+	root       string // $PNPM_HOME（例如 ~/Library/pnpm）
+	global_dir string // $PNPM_HOME/global
+}
+
+// new_pnpm_source 发现 PNPM_HOME 环境变量（优先）或平台默认路径，存在则构造 PnpmSource。
+pub fn new_pnpm_source() PnpmSource {
+	mut pnpm_home := os.getenv('PNPM_HOME')
+	if pnpm_home == '' {
+		$if macos {
+			pnpm_home = os.join_path(os.home_dir(), 'Library', 'pnpm')
+		} $else {
+			pnpm_home = os.join_path(os.home_dir(), '.local', 'share', 'pnpm')
+		}
+	}
+	mut s := PnpmSource{}
+	if os.is_dir(pnpm_home) {
+		s.root = pnpm_home
+		global_path := os.join_path(pnpm_home, 'global')
+		if os.is_dir(global_path) {
+			s.global_dir = global_path
+		}
+	}
+	return s
+}
+
+// id 实现 Source 接口：源标识 'pnpm'。
+pub fn (s PnpmSource) id() string {
+	return 'pnpm'
+}
+
+// label 实现 Source 接口：一级 tab 展示名。
+pub fn (s PnpmSource) label() string {
+	return 'pnpm'
+}
+
+// priority 实现 Source 接口：归因轮询顺序 7（位于 npm(5) 之后，brew(10) 之前）。
+pub fn (s PnpmSource) priority() int {
+	return 7
+}
+
+// roots 实现 Source 接口：$PNPM_HOME（存在才算）。
+pub fn (s PnpmSource) roots() []string {
+	if s.root != '' && os.is_dir(s.root) {
+		return [s.root]
+	}
+	return []string{}
+}
+
+// attribute 实现 Source 接口：位于 $PNPM_HOME 目录下 → {'pnpm', 'pnpm', ''}。
+pub fn (s PnpmSource) attribute(realpath string) ?Attribution {
+	if under_dir(realpath, s.root) {
+		return Attribution{
+			source: 'pnpm'
+			origin: 'pnpm'
+			scope:  ''
+		}
+	}
+	return none
+}
+
+// scopes 实现 Source 接口：pnpm 全局无二级分类，返回空。
+pub fn (s PnpmSource) scopes() []Scope {
+	return []Scope{}
+}
+
+// enrich 实现 Source 接口：从 global/*/node_modules 读取各包的 package.json 元数据，
+// 或从包装脚本解析关联的包版本与描述。
+pub fn (s PnpmSource) enrich(mut entries []model.Entry) ! {
+	if s.root == '' {
+		return
+	}
+	mut bin_map := map[string]PkgMetadata{}
+	if s.global_dir != '' && os.is_dir(s.global_dir) {
+		for ver_dir in os.ls(s.global_dir) or { []string{} } {
+			nm_dir := os.join_path(s.global_dir, ver_dir, 'node_modules')
+			if !os.is_dir(nm_dir) {
 				continue
 			}
-			f := l.split('\t')
-			if f.len >= 3 {
-				e.version = f[2]
-				e.description = f[1]
+			for entry in os.ls(nm_dir) or { []string{} } {
+				if entry.starts_with('.') {
+					continue
+				}
+				if entry.starts_with('@') {
+					scope_dir := os.join_path(nm_dir, entry)
+					for sub_entry in os.ls(scope_dir) or { []string{} } {
+						pkg_path := os.join_path(scope_dir, sub_entry, 'package.json')
+						parse_pnpm_pkg_json(pkg_path, mut bin_map)
+					}
+				} else {
+					pkg_path := os.join_path(nm_dir, entry, 'package.json')
+					parse_pnpm_pkg_json(pkg_path, mut bin_map)
+				}
+			}
+		}
+	}
+
+	for mut e in entries {
+		if e.source != 'pnpm' {
+			continue
+		}
+		if st := os.stat(e.realpath) {
+			e.installed_at = fmt_ts(st.mtime)
+		}
+		if e.name in bin_map {
+			info := bin_map[e.name]
+			if info.version != '' {
+				e.version = info.version
+			}
+			if info.description != '' {
+				e.description = info.description
+			}
+		} else {
+			// 从包装脚本内容探测版本与包名
+			content := os.read_file(e.realpath) or { '' }
+			if idx := content.index('.pnpm/') {
+				rest := content[idx + 6..]
+				if slash_idx := rest.index('/') {
+					pkg_spec := rest[..slash_idx]
+					if at_idx := pkg_spec.last_index('@') {
+						if at_idx > 0 {
+							e.version = pkg_spec[at_idx + 1..]
+							e.description = pkg_spec[..at_idx].replace('+', '/')
+						}
+					}
+				}
 			}
 		}
 	}
