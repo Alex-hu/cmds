@@ -1,7 +1,7 @@
 module store
 
-import db.sqlite
 import internal.model
+import thirdparty.sqlite
 import time
 
 // schema_version 是当前索引库的 schema 版本，对应 SQLite 的 PRAGMA user_version。

@@ -2,14 +2,20 @@
 
 配套文档：[DESIGN.md](DESIGN.md)（产品需求与决策）· [PLAN.md](PLAN.md)（开发计划）· [mockups/](mockups/index.html)（交互原型）。本文回答"代码怎么组织、模块怎么依赖、关键机制怎么实现"。
 
-## 0. 技术选型结论（依赖研究的结果，全部实测于本机 V 0.5.2）
+## 0. 技术选型与依赖管理（实测于本机 V 0.5.2）
 
-**零第三方依赖，纯标准库。** 依据：
+**依赖管理策略：允许按需引入第三方依赖，优先选用质量可靠、活跃维护的第三方库或标准库。**
+
+依赖分层机制：
+1. **V 模块依赖（包管理器 vpm）**：第三方 V 依赖在根目录 `v.mod` 中显式声明（`dependencies: [...]`，类似 Java Maven 的 `pom.xml`），克隆项目后运行 `make deps` 或 `v sync` 自动下载与还原。
+2. **系统原生构建依赖（System Prerequisites）**：V 直接编译为机器码，底层与系统 C 库（如 `sqlite3`）对接；macOS 下依赖 `pkg-config` 提供头文件与链接元数据。通过 `Makefile` 的 `check-deps` 目标在构建前自动化预检，杜绝隐式缺失。
+
+现有核心选型依据：
 
 | 需求 | 选型 | 实测结论 |
 |---|---|---|
 | 参数/子命令 | stdlib `flag` | 已在骨架中验证；`vlib/cli`（Commander 式）子命令分发可用但自动 `--help` 实测报错（README 与实现不符），暂不用 |
-| 索引存储 | stdlib `db/sqlite` | **全链路实测通过**：`sqlite.connect(path)!` → DDL → `exec_param_many` 参数化写入 → `exec`/`q_int` 查询。坑：`connect` 结果需声明 `mut` 才能调用 `close()`；`json` 模块已被移除（`--json` 输出在渲染层手写序列化或用 `json2`） |
+| 索引存储 | stdlib `db/sqlite` + 系统 `sqlite3` | **全链路实测通过**：`sqlite.connect(path)!` → DDL → `exec_param_many` 参数化写入 → `exec`/`q_int` 查询。坑：`connect` 结果需声明 `mut` 才能调用 `close()`；macOS 下需安装 `pkg-config` 协助编译器获取头文件；`json` 模块已被移除（`--json` 输出在渲染层手写序列化或用 `json2`） |
 | 接口协议 | V `interface` | 实测通过：`[]Source` 异构集合 + 动态分发 + `?string` Option 返回的方法签名均可用 |
 | 终端控制 | stdlib `term` | 颜色/终端尺寸/按键读取（`term.key_pressed`、`term.utf8_getchar`）齐备 |
 | TUI 框架 | **手写 ANSI 视图循环** | `term/ui`（termui）在本版本仅剩核心单文件、组件缺失；`ncurses` 引 C 依赖过重。手写可控且需求有限（单屏表格 + 弹层/分栏） |
@@ -18,7 +24,7 @@
 | 并发 | stdlib `spawn`/`sync` | 无需第三方 |
 | 正则/字符串 | stdlib `regex`、`strings` | 足够 |
 
-第三方生态现状（搜索结论）：vex 是 web 框架（非 CLI）、remimimimi/clip 已 3 年未更新。**引入任何 vpm 依赖前必须先在 AGENTS.md 登记评估结论。**
+引入第三方库的原则：优先评估其维护活跃度、是否有 CI/测试、无侵入性。确认引入时写入 `v.mod`。
 
 ## 1. 分层与模块依赖
 

@@ -10,15 +10,27 @@
 
 ## 快速开始
 
-需要 [V 语言](https://vlang.io) 0.5.x：
+### 1. 环境依赖
+
+- **V 语言**：0.5.x（[安装指引](https://vlang.io)）
+- **零系统级外部依赖**：本项目已内置第三方独立 SQLite 驱动模块，解耦了对系统 `pkg-config` 的依赖，开箱即用。
+
+### 2. 构建与运行
+
+推荐使用工程化 `make`（自动校验依赖并编译）：
 
 ```sh
-v -prod -o cmds .
+make prod         # 检查依赖并进行生产构建（或直接运行 v -prod -o cmds .）
 ./cmds update     # 建立索引（样例机器：3417 条命令，约 6 秒）
 ./cmds list --source brew
 ```
 
 开发模式：`v run . update`。
+
+### 3. 依赖管理
+
+- 本项目支持按需引入第三方库，在 `v.mod` 中声明（`dependencies: [...]`）；
+- 克隆或添加依赖后，运行 `make deps`（或 `v sync`）自动同步还原依赖。
 
 ## 使用
 

@@ -4,21 +4,23 @@
 
 ## 环境
 
-- 工具链：V 0.5.2（`/usr/local/bin/v`，Homebrew 安装；以 `v version` 输出为准，安装目录名可能滞后）。
+- 工具链：V 0.5.2（`/usr/local/bin/v` 或 `/Users/alex/tools/v/v`；以 `v version` 输出为准）。
+- 构建依赖：无特殊系统依赖（项目通过 `thirdparty/sqlite` 独立驱动解耦了官方标准库对系统 `pkg-config` 的依赖，开箱即编）。
 - V 经 C 后端编译为原生二进制，产物无运行时依赖。首次编译需预编译工具链，较慢属正常。
 
 ## 常用命令
 
 | 任务 | 命令 |
 |---|---|
+| 工程化构建（推荐） | `make prod`（自动检查前置依赖并构建产物） |
 | 运行 | `v run .` |
 | 调试构建 | `v .`（产物名默认取目录名，用 `-o cmds` 指定） |
 | 发布构建 | `v -prod -o cmds .` |
-| 测试（全部 / 聚焦） | `v test .` / `v test internal/util/` |
-| 格式化 | `v fmt -w .`（提交前必跑） |
-| 静态检查 | `v vet .` |
+| 测试（全部 / 聚焦） | `v test .` / `v test internal/util/`（或 `make test`） |
+| 格式化 | `v fmt -w .`（或 `make fmt`，提交前必跑） |
+| 静态检查 | `v vet .`（或 `make vet`） |
+| 依赖管理 | `v install <模块>`（添加第三方依赖并写入 v.mod）；`make deps` / `v sync`（还原全部依赖） |
 | 交叉编译 | `v -prod -os linux .`（可换 windows/macos） |
-| 添加依赖 | `v install <模块>`（写入 v.mod；克隆后 `v sync` 还原） |
 
 ## 目录结构（当前实际）
 
@@ -102,12 +104,11 @@ fn main() {
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 模块分层、import 规则、关键机制、技术选型记录（ADR）。
 - [PLAN.md](PLAN.md) — 里程碑与任务拆解、验收标准、风险清单。
 - [mockups/](mockups/index.html) — 交互原型（浏览器打开）。已定稿：原型 A + 二级 scope tab（a-tabs.html，A2 版本）。
-- 依赖政策：**零第三方依赖**（纯标准库，实测结论见 ARCHITECTURE.md §0）。引入任何 vpm 依赖前必须在 ARCHITECTURE.md 登记评估依据。
+- 依赖政策与包管理：**允许按需引入第三方依赖**。优先选用维护活跃、测试完备的第三方库或标准库。第三方依赖统一在根目录 `v.mod` 的 `dependencies: [...]` 中声明，克隆项目后运行 `make deps`（或 `v sync`）自动还原（类似 Maven 的 dependency 管理）。原生系统依赖（如 `pkg-config`、`sqlite3`）属于构建环境前置依赖，由 `Makefile` 的 `check-deps` 自动预检。
 
 ## 已知坑
 
-- `v test .` 只编译**含有测试文件**的模块——无测试模块的编译错误要到 `v build .` 才暴露；提交前两者都要跑。
-- **SQLite（stdlib `db.sqlite`）**：`connect(path)!` 的结果必须声明为 `mut` 才能调用 `close()`（close 是 mut 方法）；写入用 `exec_param_many`（参数化防注入/转义问题），查询用 `exec`/`q_int`/`q_string`，均已实测。`exec` 一次只执行**第一条**语句（多条 DDL 静默丢弃其余）；`get_int` 是 32 位截断，大整数用 `get_string(col).u64()`。
+- **SQLite 驱动与模块选择**：官方标准库 `db.sqlite` 在 macOS `darwin` 分支遗漏 `#include "sqlite3.h"`，在无 `pkg-config` 时会触发 Clang 编译报错及 ARM64 下的 SIGSEGV。**本项目已通过 `thirdparty/sqlite` 独立驱动模块彻底解耦官方 `db.sqlite`**，直接通过 `#include <sqlite3.h>` 和 `#flag darwin -lsqlite3` 链接，无需系统安装 `pkg-config`，在全架构 macOS 下开箱即用。API 保持标准化：写入用 `exec_param_many`，查询用 `exec`/`q_int`/`q_string`，连接需 `mut` 调用 `close()`。
 - **V `interface` 动态分发可用**（Source 插件协议的基础）：`[]Source` 异构集合、`?string` Option 返回、`mut []T` 参数的方法签名均实测通过；注意向 interface 数组 push 需 `mut` 声明。
 - **os API 实际形态（多处与直觉不符，均已实测）**：`os.execute` 已废弃（告警）→ 用 `os.exec(['cmd','args'])`，返回普通结构体**只有** `exit_code`/`output`（无 stderr，命令不存在时 exit_code=-1）；`os.real_path(p) string`（不是 `realpath`，不失败原样返回）；目录列举是 `os.ls(p) ![]string`（无 `read_dir`）；`os.mkdir_all(p)` 尾参 MkdirParams 可整体省略；`os.stat` 的 `mode` 是 u32（`(mode & 0o170000)==0o100000` 判普通文件、`mode & 0o111` 判执行位）；`os.getenv` 返回普通 string（不能 `if v := os.getenv(...)`）；`os.File.close()` 是 mut 方法；rune 的 `.str()` 返回**十进制数字串**（取字符用 `.ascii_str()`）；`time.unix(t)` 单参数 + `custom_format()`。
 - **flag 子命令模式**：全局解析器必须 `fp.allow_unknown_args()`，否则子命令自己的 `--source` 会在主解析器 finalize 时报 unknown flag。
