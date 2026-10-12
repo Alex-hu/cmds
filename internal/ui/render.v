@@ -149,24 +149,65 @@ pub fn compute_scroll_offset(n int, active_idx int, cur_offset int, cols int, pr
 	return offset
 }
 
-// render_scrollable_tabs 渲染带横向滑动视口与 ◀ ▶ 指示器的 Tab 栏。
-fn render_scrollable_tabs(n int, active_idx int, offset int, cols int, prefix string, is_subtab bool, render_pill fn (int) string, get_width fn (int) int) string {
+// pad_line_to_cols 将整行（可包含 ANSI 样式）补齐至指定列宽，并在末尾重置样式，绝不从中间截断字符以防样式泄漏。
+pub fn pad_line_to_cols(s string, cols int) string {
+	vis := term.printable_len(s)
+	if vis < cols {
+		return s + ansi_reset + ' '.repeat(cols - vis)
+	}
+	return s + ansi_reset
+}
+
+// build_scrollable_tabs 渲染带横向滑动视口与 ◀ ▶ 指示器的 Tab 栏，并返回 (渲染字符串, 新的 offset)。
+pub fn build_scrollable_tabs(pills []string, widths []int, active_idx int, cur_offset int, cols int, prefix string, is_subtab bool) (string, int) {
+	n := pills.len
 	if n == 0 {
-		return prefix
+		return prefix, 0
 	}
 	prefix_w := term.printable_len(prefix)
-	left_w := if offset > 0 { 2 } else { 0 }
-
-	// 寻找 end_idx：从 offset 开始，能塞入 cols 范围内的最大下标
-	mut end_idx := active_idx
-	mut cur_w := prefix_w + left_w
-	for i in offset .. (active_idx + 1) {
-		cur_w += get_width(i)
+	mut active := active_idx
+	if active < 0 {
+		active = 0
+	}
+	if active >= n {
+		active = n - 1
 	}
 
-	// 尝试向右多纳入后续的 tab 项
-	for i in (active_idx + 1) .. n {
-		w := get_width(i)
+	mut offset := cur_offset
+	if active < offset {
+		offset = active
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= n {
+		offset = n - 1
+	}
+
+	// 1. 如果当前 offset 导致 active 无法在 cols 内完整展示，向右移动 offset
+	for offset < active {
+		left_w := if offset > 0 { 2 } else { 0 }
+		right_w := if active < n - 1 { 2 } else { 0 }
+		mut total_w := prefix_w + left_w + right_w
+		for i in offset .. (active + 1) {
+			total_w += widths[i]
+		}
+		if total_w <= cols {
+			break
+		}
+		offset++
+	}
+
+	// 2. 决定右边界 end_idx：从 offset 开始，能塞入 cols 范围内的最大下标
+	left_w := if offset > 0 { 2 } else { 0 }
+	mut cur_w := prefix_w + left_w
+	for i in offset .. (active + 1) {
+		cur_w += widths[i]
+	}
+
+	mut end_idx := active
+	for i in (active + 1) .. n {
+		w := widths[i]
 		right_w := if i < n - 1 { 2 } else { 0 }
 		if cur_w + w + right_w <= cols {
 			cur_w += w
@@ -176,28 +217,49 @@ fn render_scrollable_tabs(n int, active_idx int, offset int, cols int, prefix st
 		}
 	}
 
+	// 3. 如果右侧已触达末尾 (end_idx == n - 1)，且左侧还有空间（如窗口拉宽），尝试向左展开前序 Tab
+	if end_idx == n - 1 {
+		for offset > 0 {
+			cand := offset - 1
+			cand_left_w := if cand > 0 { 2 } else { 0 }
+			mut cand_total_w := prefix_w + cand_left_w
+			for i in cand .. (end_idx + 1) {
+				cand_total_w += widths[i]
+			}
+			if cand_total_w <= cols {
+				offset = cand
+			} else {
+				break
+			}
+		}
+	}
+
+	// 4. 拼装整行
+	arrow_color := if is_subtab { fg_yellow } else { fg_accent }
 	mut sb := strings.new_builder(256)
 	sb.write_string(prefix)
 
 	if offset > 0 {
-		arrow_color := if is_subtab { fg_yellow } else { fg_accent }
 		sb.write_string('${arrow_color}◀ ${ansi_reset}')
 	}
 
 	for i in offset .. (end_idx + 1) {
-		sb.write_string(render_pill(i))
+		sb.write_string(pills[i])
 	}
 
 	if end_idx < n - 1 {
-		arrow_color := if is_subtab { fg_yellow } else { fg_accent }
-		sb.write_string('${arrow_color} ▶${ansi_reset}')
+		sb.write_string('${arrow_color}▶ ${ansi_reset}')
 	}
 
-	return sb.str()
+	return sb.str(), offset
 }
 
-// pad_or_truncate 依据终端可视宽度做对齐或截断，确保汉字和英文字符排版不破裂。
+// pad_or_truncate 依据终端可视宽度对纯文本做对齐或截断，确保汉字和英文字符排版不破裂。
+// 注意：本函数仅适用于纯文本字符串（不含 ANSI 转义序列）。
 pub fn pad_or_truncate(s string, width int) string {
+	if width <= 0 {
+		return ''
+	}
 	vis_len := term.printable_len(s)
 	if vis_len == width {
 		return s
@@ -209,7 +271,7 @@ pub fn pad_or_truncate(s string, width int) string {
 	runes := s.runes()
 	mut sb := strings.new_builder(width * 2)
 	mut cur_w := 0
-	target_w := if width > 2 { width - 1 } else { width }
+	target_w := if width > 1 { width - 1 } else { width }
 	for r in runes {
 		rw := term.printable_len(r.str())
 		if cur_w + rw > target_w {
@@ -218,7 +280,7 @@ pub fn pad_or_truncate(s string, width int) string {
 		sb.write_rune(r)
 		cur_w += rw
 	}
-	if width > 2 {
+	if width > 1 {
 		sb.write_string('…')
 		cur_w += 1
 	}
@@ -236,7 +298,7 @@ pub:
 }
 
 // render_view 渲染整个终端视口（Header + Tab栏 + Subtab栏 + Nushell表格 + 状态栏 + 弹窗）。
-pub fn render_view(state AppState, cols int, rows int) string {
+pub fn render_view(mut state AppState, cols int, rows int) string {
 	// 动态计算单屏展示行数 (page_size)
 	// 固定占用 9 行：标题(1) + 一级Tab(1) + 二级Tab(1) + 搜索(1) + 表格顶(1) + 表头(1) + 表格中(1) + 表格底(1) + 底栏(1)
 	page_size := if state.page_size > 0 {
@@ -285,33 +347,25 @@ pub fn render_view(state AppState, cols int, rows int) string {
 
 	// 1. 顶部标题栏
 	banner := ' cmds · 命令行工具索引与查询 (按来源与环境分类)'
-	lines << '${fg_accent}${ansi_bold}${pad_or_truncate(banner, cols)}${ansi_reset}'
+	lines << pad_line_to_cols('${fg_accent}${ansi_bold}${banner}${ansi_reset}', cols)
 
 	// 2. 一级 Tab 栏（带横向滚动视口与 ◀ ▶ 指示器）
-	tab_line := render_scrollable_tabs(state.tabs.len,
-		state.active_tab_idx,
-		state.tab_offset,
-		cols,
-		' ',
-		false,
-		fn [state] (idx int) string {
-			t := state.tabs[idx]
-			count := state.tab_counts[t] or { 0 }
-			label := '${source_display_name(t)} ${count}'
-			if idx == state.active_tab_idx {
-				return '${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
-			} else {
-				return '${fg_gray} ${label} ${ansi_reset} '
-			}
-		},
-		fn [state] (idx int) int {
-			t := state.tabs[idx]
-			count := state.tab_counts[t] or { 0 }
-			label := '${source_display_name(t)} ${count}'
-			vis := term.printable_len(label)
-			return if idx == state.active_tab_idx { vis + 6 } else { vis + 2 }
-		})
-	lines << pad_or_truncate(tab_line, cols)
+	mut tab_pills := []string{}
+	mut tab_widths := []int{}
+	for idx, t in state.tabs {
+		count := state.tab_counts[t] or { 0 }
+		label := '${source_display_name(t)} ${count}'
+		pill := if idx == state.active_tab_idx {
+			'${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
+		} else {
+			'${fg_gray} ${label}  ${ansi_reset}'
+		}
+		tab_pills << pill
+		tab_widths << term.printable_len(pill)
+	}
+	tab_line, new_tab_off := build_scrollable_tabs(tab_pills, tab_widths, state.active_tab_idx, state.tab_offset, cols, ' ', false)
+	state.tab_offset = new_tab_off
+	lines << pad_line_to_cols(tab_line, cols)
 
 	// 3. 二级 Tab 栏（Scope，带横向滚动视口与 ◀ ▶ 指示器）
 	cur_tab := state.tabs[state.active_tab_idx]
@@ -319,35 +373,28 @@ pub fn render_view(state AppState, cols int, rows int) string {
 	if cur_tab in ['conda', 'npm'] && state.subtabs.len > 0 {
 		prefix_str := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
 		prefix := '${fg_yellow}${prefix_str}${ansi_reset}'
-		sub_line = render_scrollable_tabs(state.subtabs.len,
-			state.active_subtab_idx,
-			state.subtab_offset,
-			cols,
-			prefix,
-			true,
-			fn [state, cur_tab] (idx int) string {
-				s := state.subtabs[idx]
-				count := state.subtab_counts[s] or { 0 }
-				disp_sub := subtab_display_name(cur_tab, s)
-				label := '${disp_sub} · ${count}'
-				if idx == state.active_subtab_idx {
-					return '${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} '
-				} else {
-					return '${fg_gray} ${label} ${ansi_reset} '
-				}
-			},
-			fn [state, cur_tab] (idx int) int {
-				s := state.subtabs[idx]
-				count := state.subtab_counts[s] or { 0 }
-				disp_sub := subtab_display_name(cur_tab, s)
-				label := '${disp_sub} · ${count}'
-				vis := term.printable_len(label)
-				return if idx == state.active_subtab_idx { vis + 4 } else { vis + 2 }
-			})
+		mut sub_pills := []string{}
+		mut sub_widths := []int{}
+		for idx, s in state.subtabs {
+			count := state.subtab_counts[s] or { 0 }
+			disp_sub := subtab_display_name(cur_tab, s)
+			label := '${disp_sub} · ${count}'
+			pill := if idx == state.active_subtab_idx {
+				'${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} '
+			} else {
+				'${fg_gray} ${label}  ${ansi_reset}'
+			}
+			sub_pills << pill
+			sub_widths << term.printable_len(pill)
+		}
+		built_sub, new_sub_off := build_scrollable_tabs(sub_pills, sub_widths, state.active_subtab_idx, state.subtab_offset, cols, prefix, true)
+		state.subtab_offset = new_sub_off
+		sub_line = built_sub
 	} else {
 		sub_line = ' ${fg_dark}(该来源无二级分类)${ansi_reset}'
+		state.subtab_offset = 0
 	}
-	lines << pad_or_truncate(sub_line, cols)
+	lines << pad_line_to_cols(sub_line, cols)
 
 	// 4. 搜索行
 	mut search_line := strings.new_builder(128)
@@ -358,7 +405,7 @@ pub fn render_view(state AppState, cols int, rows int) string {
 	} else {
 		search_line.write_string(' ${fg_dark}提示: 按 / 开启实时搜索过滤${ansi_reset}')
 	}
-	lines << pad_or_truncate(search_line.str(), cols)
+	lines << pad_line_to_cols(search_line.str(), cols)
 
 	// 5. Nushell 风格表格顶边、表头与中分线
 	lines << render_nushell_border_top(specs)
@@ -417,9 +464,9 @@ pub fn render_view(state AppState, cols int, rows int) string {
 		gap := if cols > vis_short + vis_stat { cols - vis_short - vis_stat - 1 } else { 1 }
 		foot_line = '${short_left}${' '.repeat(gap)}${fg_yellow}${stat_msg}${ansi_reset}'
 	} else {
-		foot_line = pad_or_truncate('${fg_yellow}${stat_msg}${ansi_reset}', cols)
+		foot_line = '${fg_yellow}${stat_msg}${ansi_reset}'
 	}
-	lines << foot_line
+	lines << pad_line_to_cols(foot_line, cols)
 
 	// 9. 组装整屏内容并严格保证行数不超过 rows
 	max_lines := if rows > 0 { rows } else { lines.len }

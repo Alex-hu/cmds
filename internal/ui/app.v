@@ -231,35 +231,49 @@ pub fn (mut s AppState) prev_subtab() {
 
 // adjust_tab_offsets 依据终端宽度 cols 调整一级 Tab 与二级 Subtab 的横向滚动视口，确保激活项始终可见。
 pub fn (mut s AppState) adjust_tab_offsets(cols int) {
+	mut tab_widths := []int{}
+	for idx, t in s.tabs {
+		count := s.tab_counts[t] or { 0 }
+		label := '${source_display_name(t)} ${count}'
+		pill := if idx == s.active_tab_idx {
+			'${bg_tab_on}${fg_white}${ansi_bold} [ ${label} ] ${ansi_reset} '
+		} else {
+			'${fg_gray} ${label}  ${ansi_reset}'
+		}
+		tab_widths << term.printable_len(pill)
+	}
 	s.tab_offset = compute_scroll_offset(s.tabs.len,
 		s.active_tab_idx,
 		s.tab_offset,
 		cols,
 		1,
-		fn [s] (idx int) int {
-			t := s.tabs[idx]
-			count := s.tab_counts[t] or { 0 }
-			label := '${source_display_name(t)} ${count}'
-			vis := term.printable_len(label)
-			return if idx == s.active_tab_idx { vis + 6 } else { vis + 2 }
+		fn [tab_widths] (idx int) int {
+			return tab_widths[idx]
 		})
 
 	cur_tab := s.tabs[s.active_tab_idx]
 	if cur_tab in ['conda', 'npm'] && s.subtabs.len > 0 {
 		prefix_str := if cur_tab == 'conda' { ' 环境：' } else { ' node 版本：' }
 		prefix_w := term.printable_len(prefix_str)
+		mut sub_widths := []int{}
+		for idx, sub in s.subtabs {
+			count := s.subtab_counts[sub] or { 0 }
+			disp_sub := subtab_display_name(cur_tab, sub)
+			label := '${disp_sub} · ${count}'
+			pill := if idx == s.active_subtab_idx {
+				'${bg_pill_on}${fg_white}${ansi_bold} (${label}) ${ansi_reset} '
+			} else {
+				'${fg_gray} ${label}  ${ansi_reset}'
+			}
+			sub_widths << term.printable_len(pill)
+		}
 		s.subtab_offset = compute_scroll_offset(s.subtabs.len,
 			s.active_subtab_idx,
 			s.subtab_offset,
 			cols,
 			prefix_w,
-			fn [s, cur_tab] (idx int) int {
-				sub := s.subtabs[idx]
-				count := s.subtab_counts[sub] or { 0 }
-				disp_sub := subtab_display_name(cur_tab, sub)
-				label := '${disp_sub} · ${count}'
-				vis := term.printable_len(label)
-				return if idx == s.active_subtab_idx { vis + 4 } else { vis + 2 }
+			fn [sub_widths] (idx int) int {
+				return sub_widths[idx]
 			})
 	} else {
 		s.subtab_offset = 0
@@ -303,7 +317,7 @@ pub fn run(entries []model.Entry) ! {
 		}
 
 		// 渲染当前视口视图
-		view_str := render_view(state, cols, rows)
+		view_str := render_view(mut state, cols, rows)
 		print(view_str)
 		flush_stdout()
 

@@ -1,6 +1,7 @@
 module ui
 
 import internal.model
+import term
 
 fn mock_entries() []model.Entry {
 	return [
@@ -190,7 +191,7 @@ fn test_render_view_no_trailing_newline_and_fixed_header() {
 	rows := 24
 	st.page_size = rows - 9 // 15
 
-	view := render_view(st, cols, rows)
+	view := render_view(mut st, cols, rows)
 	// 验证光标从 (1,1) 开始
 	assert view.starts_with('\x1b[H')
 	// 验证末尾没有多余换行符（防止末行换行触发终端向下滚屏）
@@ -210,6 +211,39 @@ fn test_subtab_display_name() {
 	assert subtab_display_name('conda', 'anaconda3/envs/myenv') == 'anaconda3/myenv'
 	assert subtab_display_name('conda', 'anaconda3/base') == 'anaconda3/base'
 	assert subtab_display_name('npm', 'fnm/v22.12.0') == 'fnm/v22.12.0'
+}
+
+fn test_pad_line_to_cols() {
+	ansi_str := '\x1b[38;5;75mhello\x1b[0m'
+	padded := pad_line_to_cols(ansi_str, 10)
+	// 可视宽度必须正好是 10
+	assert term.printable_len(padded) == 10
+	assert padded.ends_with('     ')
+
+	// 宽度小于等于自身时保持原样并带 reset
+	no_pad := pad_line_to_cols(ansi_str, 5)
+	assert term.printable_len(no_pad) == 5
+}
+
+fn test_build_scrollable_tabs() {
+	pills := ['[ A ]', 'B', 'C', 'D', 'E', 'F', 'G']
+	widths := [5, 1, 1, 1, 1, 1, 1]
+	cols := 8
+	prefix := ''
+
+	// active 为 0，应显示 0..3 并带右指示器 ▶
+	line0, off0 := build_scrollable_tabs(pills, widths, 0, 0, cols, prefix, false)
+	assert off0 == 0
+	assert term.printable_len(line0) <= cols
+	assert line0.contains('▶')
+	assert !line0.contains('◀')
+
+	// active 为 6（末尾），应推进 offset 并带左指示器 ◀
+	line6, off6 := build_scrollable_tabs(pills, widths, 6, 0, cols, prefix, false)
+	assert off6 > 0
+	assert term.printable_len(line6) <= cols
+	assert line6.contains('◀')
+	assert !line6.contains('▶')
 }
 
 fn test_compute_scroll_offset() {
@@ -269,7 +303,7 @@ fn test_subtab_horizontal_scrolling_in_view() {
 	rows := 24
 	st.adjust_tab_offsets(cols)
 
-	view := render_view(st, cols, rows)
+	view := render_view(mut st, cols, rows)
 	// 验证包含左指示箭头 ◀
 	assert view.contains('◀')
 	// 验证当前选中的环境名在视口中完整可见且高亮包含在内
