@@ -1,4 +1,5 @@
 /cmds
 .DS_Store
 .*.v3cc.*
+.v3_*
 

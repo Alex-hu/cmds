@@ -2,14 +2,16 @@ module cmd
 
 import flag
 import internal.store
+import internal.ui
 import os
-import strings
 
-// list_cmd 从索引读取并打印命令清单（M2 提供完整 report/JSON/CJK 对齐，此处为可用版）。
+// list_cmd 从索引读取并打印命令清单（支持 Nushell 风格静态表格与交互式 Tab 浏览器）。
 fn list_cmd(ctx Context, args []string) ! {
 	mut fp := flag_parser_for('list', args)
 	src := fp.string('source', `s`, '', '按来源过滤：brew/npm/conda/cargo/go/rvm/app/system/manual')
 	scope := fp.string('scope', 0, '', '按二级分类过滤（conda 环境名 / node 版本标识）')
+	interactive := fp.bool('interactive', `i`, false, '启动交互式 Tab 浏览器 (原型 A2)')
+	plain := fp.bool('plain', `p`, false, '强制输出无交互的 Nushell 边框表格')
 	rest := fp.finalize() or {
 		eprintln('cmds: ${err}')
 		exit(2)
@@ -28,25 +30,32 @@ fn list_cmd(ctx Context, args []string) ! {
 		eprintln('cmds: 打开索引失败: ${err}')
 		exit(1)
 	}
-	defer { st.close() }
+	defer {
+		st.close()
+	}
+
+	// 判断是否进入全屏交互式 Tab 浏览器模式
+	is_tty := os.is_atty(0) > 0 && os.is_atty(1) > 0
+	should_run_tui := interactive || (is_tty && !plain && src == '' && scope == '')
+
+	if should_run_tui {
+		all_entries := st.load_all() or {
+			eprintln('cmds: 加载索引失败: ${err}')
+			exit(1)
+		}
+		ui.run(all_entries)!
+		return
+	}
+
+	// 静态查询与 Nushell 风格表格输出
 	entries := st.query(src, scope, '') or {
 		eprintln('cmds: 查询失败: ${err}')
 		exit(1)
 	}
-	if entries.len == 0 {
-		println('(无匹配条目)')
-		return
-	}
 	if ctx.verbose {
 		eprintln("source='${src}' scope='${scope}'")
 	}
-
-	mut sb := strings.new_builder(1024)
-	sb.writeln('${th('NAME', 24)}${th('SOURCE', 8)}${th('SCOPE', 22)}${th('VERSION', 12)}${th('INSTALLED', 18)}PATH')
-	for e in entries {
-		sb.writeln('${td(e.name, 24)}${td(e.source, 8)}${td(e.scope, 22)}${td(e.version, 12)}${td(e.installed_at, 18)}${e.realpath}')
-	}
-	println(sb.str())
+	println(ui.render_static_table(entries))
 }
 
 // flag_parser_for 为子命令构造独立的 flag 解析器（args 不含子命令名）。
@@ -55,12 +64,4 @@ fn flag_parser_for(name string, args []string) flag.FlagParser {
 	fp.application('cmds ' + name)
 	fp.skip_executable()
 	return fp
-}
-
-fn th(s string, w int) string {
-	return pad(s, w + 2)
-}
-
-fn td(s string, w int) string {
-	return pad(s, w + 2)
 }
