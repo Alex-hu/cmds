@@ -78,9 +78,12 @@ case "$ARCH" in
 esac
 
 if [ -z "$VERSION" ]; then
-  VERSION="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)" || true
-  [ -n "$VERSION" ] || die "failed to resolve latest release (is https://github.com/${REPO} public?)"
+  # 不走 api.github.com：未认证限流 60 次/小时，共享出口 IP 极易耗尽；
+  # 改为跟随 releases/latest 的 302，从落地 URL 里提取 tag（无 API 限流）。
+  latest_url="$(fetch -o /dev/null -w '%{url_effective}' -L \
+    "https://github.com/${REPO}/releases/latest")" || true
+  VERSION="$(printf '%s\n' "$latest_url" | sed -n 's#.*/releases/tag/\([^/?#]*\).*#\1#p')"
+  [ -n "$VERSION" ] || die "failed to resolve latest release (does https://github.com/${REPO}/releases exist?)"
 fi
 
 ASSET="cmds-${VERSION}-macos-${ARCH}.tar.gz"
