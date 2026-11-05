@@ -17,22 +17,16 @@ on:
 permissions:
   contents: write # gh release 创建/上传资产需要
 
-env:
-  # 与本地开发环境完全一致的 V 版本（小版本间存在破坏性变更，勿随手升级；
-  # 升级前先在本地跑通 v test . 再改这里）
-  V_COMMIT: 81be246 # V 0.5.2
-
 jobs:
   build-macos:
     runs-on: macos-latest # arm64 runner；x86_64 产物由 -arch x64 交叉编译获得
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install V (pinned commit)
+      - name: Install V
         run: |
-          git clone https://github.com/vlang/v "$HOME/vlang"
-          git -C "$HOME/vlang" checkout "$V_COMMIT"
-          make -C "$HOME/vlang"
+          git clone --depth 1 https://github.com/vlang/v "$HOME/vlang"
+          make -C "$HOME/vlang" -j4
           echo "$HOME/vlang" >> "$GITHUB_PATH"
 
       - name: Show toolchain

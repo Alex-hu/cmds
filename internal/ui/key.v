@@ -5,7 +5,7 @@ import term.termios
 
 #include <unistd.h>
 
-fn C.read(fd int, buf voidptr, count usize) isize
+fn C.read(fd int, buf voidptr, count uint) int
 
 // KeyType 定义 TUI 支持的按键类别。
 pub enum KeyType {
