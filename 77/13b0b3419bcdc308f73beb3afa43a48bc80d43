@@ -1,0 +1,32 @@
+internal/model/model.v
+  s_54d6d831e6e41e::t_563850c21ce84b 186-187,193-215
+internal/model/model_test.v
+  s_54d6d831e6e41e::t_a847af3e791e8b 139-214
+internal/ui/render.v
+  s_54d6d831e6e41e::t_de1f8c46d0bb45 544-545,562-563
+  s_54d6d831e6e41e::t_54ff260b33c7a5 16,543,546-548,561,564-566,689,711-712,728,744
+internal/ui/app.v
+  s_54d6d831e6e41e::t_c16d6951045eb8 3,33,540,542-554,560-570,579-581,606-608
+internal/ui/ui_test.v
+  s_54d6d831e6e41e::t_533f96734f7960 477-538
+internal/clip/clip_test.v
+  s_54d6d831e6e41e::t_1e15063635860a 1-13
+internal/clip/clip.v
+  s_54d6d831e6e41e::t_6b96049d626467 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "7713b0b3419bcdc308f73beb3afa43a48bc80d43",
+  "prompts": {},
+  "sessions": {
+    "s_54d6d831e6e41e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1aa5e-ba30-717e-b535-fc51de1e2801",
+        "model": "gemini-3.8-flash"
+      },
+      "human_author": "Alex-hu <Alex-hu@users.noreply.github.com>"
+    }
+  }
+}
