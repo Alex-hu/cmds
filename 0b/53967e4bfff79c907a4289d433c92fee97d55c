@@ -1,0 +1,21 @@
+.github/workflows/release.yml
+  s_54d6d831e6e41e::t_216357439f5289 26,28-29
+internal/ui/key.v
+  s_54d6d831e6e41e::t_c5312bfeb39a68 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "0b53967e4bfff79c907a4289d433c92fee97d55c",
+  "prompts": {},
+  "sessions": {
+    "s_54d6d831e6e41e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1aa5e-ba30-717e-b535-fc51de1e2801",
+        "model": "gemini-3.8-flash"
+      },
+      "human_author": "Alex-hu <Alex-hu@users.noreply.github.com>"
+    }
+  }
+}
