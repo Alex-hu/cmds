@@ -86,7 +86,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          # 尝试从 CHANGELOG.md 中提取当前版本的更新日志
+          awk -v ver="[${VERSION}]" '
+            $0 ~ "^## \\[" {
+              if (found) exit;
+              if (index($0, ver)) { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md > dist/RELEASE_NOTES.md || true
+
+          # 若成功提取到更新说明，使用 --notes-file；否则回退到 GitHub 自动提取 --generate-notes
+          NOTES_ARG="--generate-notes"
+          if [ -s dist/RELEASE_NOTES.md ]; then
+            NOTES_ARG="--notes-file dist/RELEASE_NOTES.md"
+          fi
+
           # 重跑同 tag 时 release 已存在，退化为覆盖上传资产
           gh release create "$TAG" dist/*.tar.gz dist/*.sha256 \
-            --generate-notes --verify-tag \
+            $NOTES_ARG --verify-tag \
             || gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber

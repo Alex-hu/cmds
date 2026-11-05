@@ -4,7 +4,7 @@ import cmd
 import flag
 import os
 
-const version = '0.1.0'
+const version = '0.1.1'
 
 fn main() {
 	// 区分全局 flag 与子命令及其参数，避免全局 parser 截获子命令的 --help
