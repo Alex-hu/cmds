@@ -13,6 +13,7 @@ const fg_border = '\x1b[38;5;240m'
 const fg_accent = '\x1b[38;5;75m'
 const fg_yellow = '\x1b[38;5;178m'
 const fg_cyan = '\x1b[38;5;73m'
+const fg_green = '\x1b[38;5;71m'
 const bg_sel = '\x1b[48;5;236m'
 const bg_tab_on = '\x1b[48;5;238m'
 const bg_pill_on = '\x1b[48;5;24m'
@@ -539,7 +540,12 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 	shortcuts << '${fg_accent}[/]${ansi_reset} 搜索'
 	shortcuts << '${fg_accent}[q]${ansi_reset} 退出'
 
-	left_str := ' ' + shortcuts.join(' ')
+	left_str := if state.status_msg.len > 0 {
+		avail_w := if cols > 30 { cols - 20 } else { 10 }
+		' ${fg_green}' + pad_or_truncate(state.status_msg, avail_w) + ansi_reset
+	} else {
+		' ' + shortcuts.join(' ')
+	}
 	cur_p := state.current_page() + 1
 	tot_p := state.total_pages()
 	stat_msg := '第 ${cur_p}/${tot_p} 页 · ${page_size}条/屏 · 共 ${items.len} 条'
@@ -552,7 +558,12 @@ pub fn render_view(mut state AppState, cols int, rows int) string {
 		gap := cols - vis_left - vis_stat - 1
 		foot_line = '${left_str}${' '.repeat(gap)}${fg_yellow}${stat_msg}${ansi_reset}'
 	} else if cols > vis_stat + 10 {
-		short_left := ' ${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页 ${fg_accent}[q]${ansi_reset} 退出'
+		short_left := if state.status_msg.len > 0 {
+			short_avail := if cols > vis_stat + 4 { cols - vis_stat - 4 } else { 10 }
+			' ${fg_green}' + pad_or_truncate(state.status_msg, short_avail) + ansi_reset
+		} else {
+			' ${fg_accent}[PgUp/PgDn]${ansi_reset} 翻页 ${fg_accent}[q]${ansi_reset} 退出'
+		}
 		vis_short := term.printable_len(short_left)
 		gap := if cols > vis_short + vis_stat { cols - vis_short - vis_stat - 1 } else { 1 }
 		foot_line = '${short_left}${' '.repeat(gap)}${fg_yellow}${stat_msg}${ansi_reset}'
@@ -675,7 +686,7 @@ fn render_nushell_empty_row(specs []TableColSpec) string {
 fn render_modal(e model.Entry, cols int, rows int) string {
 	modal_w := if cols > 70 { 68 } else { cols - 4 }
 	content_w := modal_w - 4
-	modal_h := 16
+	modal_h := 17
 
 	start_y := if rows > modal_h { (rows - modal_h) / 2 } else { 2 }
 	start_x := if cols > modal_w { (cols - modal_w) / 2 } else { 2 }
@@ -697,6 +708,8 @@ fn render_modal(e model.Entry, cols int, rows int) string {
 	top_line.write_string('╮${ansi_reset}')
 	sb.write_string(draw_box_line(start_y, top_line.str()))
 
+	exec_cmd := model.execution_command(e)
+
 	// 属性行
 	lines := [
 		'命令名称:   ${e.name}',
@@ -712,6 +725,7 @@ fn render_modal(e model.Entry, cols int, rows int) string {
 		} else {
 			'${fg_yellow}否 (未在当前 PATH 中)${ansi_reset}'
 		}}',
+		'执行命令:   ${exec_cmd}',
 		'功能描述:   ${if e.description.len > 0 { e.description } else { '—' }}',
 	]
 
@@ -727,7 +741,7 @@ fn render_modal(e model.Entry, cols int, rows int) string {
 	sb.write_string(draw_box_line(mid_y, mid_border))
 
 	hint_y := mid_y + 1
-	hint_text := pad_or_truncate('按 Enter / Esc / q 关闭详情卡片', content_w)
+	hint_text := pad_or_truncate('按 Enter 复制执行命令 · Esc/q 关闭', content_w)
 	sb.write_string(draw_box_line(hint_y, '${bg_modal}${fg_accent}│${ansi_reset}${bg_modal}  ${fg_gray}${hint_text} ${fg_accent}│${ansi_reset}'))
 
 	bot_y := hint_y + 1

@@ -183,9 +183,36 @@ pub fn action_guidance(e Entry) (string, string) {
 			switch_env = 'uv run ${e.name}'
 		} else if e.manager == 'go' && e.scope == 'gopath' {
 			switch_env = 'export PATH="\$GOPATH/bin:\$PATH"'
+		} else if e.manager == 'rvm' && e.scope != '' {
+			switch_env = 'rvm use ${e.scope}'
 		}
 	}
 	return how_to_run, switch_env
+}
+
+// execution_command 生成适合复制到剪贴板并直接在终端执行的完整命令字符串。
+// 若在当前 PATH 中（in_path 为 true），只返回命令名；
+// 若需切换环境（如 conda/fnm/nvm），返回拼接后的环境切换与执行命令（如 `conda activate myenv && jupyter`）；
+// 若为 uv 工具，返回 `uv run <name>`；
+// 若不在 PATH 且无环境切换指令，返回其绝对路径（realpath，含空格时自动加引号包裹）。
+pub fn execution_command(e Entry) string {
+	if e.in_path {
+		return e.name
+	}
+	_, switch_env := action_guidance(e)
+	if switch_env != '' {
+		if switch_env.starts_with('uv run ') {
+			return switch_env
+		}
+		return '${switch_env} && ${e.name}'
+	}
+	if e.realpath == '' {
+		return e.name
+	}
+	if e.realpath.contains(' ') && !e.realpath.starts_with('"') && !e.realpath.starts_with("'") {
+		return '"${e.realpath}"'
+	}
+	return e.realpath
 }
 
 // rank_search 对 entries 执行多词加权检索与排序，并返回带行动指引的结果列表。

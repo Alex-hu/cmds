@@ -136,6 +136,82 @@ fn test_action_guidance() {
 	assert se4 == 'uv run kimi'
 }
 
+fn test_execution_command() {
+	// 1. in_path 为 true：直接返回命令名
+	e_path := Entry{
+		name:      'git'
+		in_path:   true
+		realpath:  '/usr/local/bin/git'
+		ecosystem: 'brew'
+		manager:   'brew'
+	}
+	assert execution_command(e_path) == 'git'
+
+	// 2. conda 环境未在 PATH：组合 conda activate 与命令名
+	e_conda := Entry{
+		name:      'jupyter'
+		in_path:   false
+		realpath:  '/Users/alex/anaconda3/envs/myenv/bin/jupyter'
+		ecosystem: 'python'
+		manager:   'anaconda3'
+		scope:     'myenv'
+	}
+	assert execution_command(e_conda) == 'conda activate myenv && jupyter'
+
+	// 3. fnm 未在 PATH：组合 fnm use 与命令名
+	e_fnm := Entry{
+		name:      'tsc'
+		in_path:   false
+		realpath:  '/n/tsc'
+		ecosystem: 'node'
+		manager:   'fnm'
+		scope:     'v24.11.1'
+	}
+	assert execution_command(e_fnm) == 'fnm use v24.11.1 && tsc'
+
+	// 4. uv 工具：直接使用 uv run
+	e_uv := Entry{
+		name:      'kimi'
+		in_path:   false
+		realpath:  '/u/kimi'
+		ecosystem: 'python'
+		manager:   'uv'
+		scope:     'tools'
+	}
+	assert execution_command(e_uv) == 'uv run kimi'
+
+	// 5. GOPATH 工具：组合 export PATH 与命令名
+	e_go := Entry{
+		name:      'go-outline'
+		in_path:   false
+		realpath:  '/g/bin/go-outline'
+		ecosystem: 'go'
+		manager:   'go'
+		scope:     'gopath'
+	}
+	assert execution_command(e_go) == 'export PATH="\$GOPATH/bin:\$PATH" && go-outline'
+
+	// 6. 无环境变量切换且不在 PATH：返回完整路径（含空格则加引号）
+	e_app := Entry{
+		name:      'code'
+		in_path:   false
+		realpath:  '/Applications/Visual Studio Code.app/bin/code'
+		ecosystem: 'app'
+		manager:   'app'
+	}
+	assert execution_command(e_app) == '"/Applications/Visual Studio Code.app/bin/code"'
+
+	// 7. 无环境变量切换且不在 PATH，普通无空格路径
+	e_manual := Entry{
+		name:      'custom-tool'
+		in_path:   false
+		realpath:  '/opt/bin/custom-tool'
+		ecosystem: 'manual'
+		manager:   'manual'
+	}
+	assert execution_command(e_manual) == '/opt/bin/custom-tool'
+}
+
 fn test_rank_search() {
 	entries := [
 		Entry{

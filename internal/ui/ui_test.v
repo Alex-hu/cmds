@@ -474,3 +474,65 @@ fn test_subtab_horizontal_scrolling_in_view() {
 	assert view.contains('◀')
 	assert view.contains('torch')
 }
+
+fn test_render_modal_with_execution_command() {
+	// in-path 条目
+	e1 := model.Entry{
+		name:         'git'
+		ecosystem:    'brew'
+		manager:      'brew'
+		source_id:    'brew'
+		origin:       'brew'
+		scope:        ''
+		realpath:     '/opt/homebrew/bin/git'
+		in_path:      true
+		version:      '2.43.0'
+		description:  'Fast version control'
+		installed_at: '2025-01-01'
+	}
+	m1 := render_modal(e1, 80, 24)
+	assert m1.contains('命令详情: git')
+	assert m1.contains('执行命令:   git')
+	assert m1.contains('按 Enter 复制执行命令 · Esc/q 关闭')
+
+	// 需要环境切换的 conda 条目
+	e2 := model.Entry{
+		name:         'jupyter'
+		ecosystem:    'python'
+		manager:      'anaconda3'
+		source_id:    'conda'
+		origin:       'conda:anaconda3/envs/myenv'
+		scope:        'myenv'
+		realpath:     '/Users/alex/anaconda3/envs/myenv/bin/jupyter'
+		in_path:      false
+		version:      '1.0.0'
+		description:  'Notebook'
+		installed_at: '2025-01-01'
+	}
+	m2 := render_modal(e2, 80, 24)
+	assert m2.contains('命令详情: jupyter')
+	assert m2.contains('执行命令:   conda activate myenv && jupyter')
+	assert m2.contains('按 Enter 复制执行命令 · Esc/q 关闭')
+}
+
+fn test_render_view_with_status_message() {
+	entries := mock_entries()
+	mut st := new_app_state(entries)
+	st.status_msg = '✓ 已复制: conda activate myenv && jupyter'
+
+	view := render_view(mut st, 80, 24)
+	assert view.contains('✓ 已复制:')
+	assert view.contains('conda activate myenv && jupyter')
+}
+
+fn test_render_view_detail_modal_active() {
+	entries := mock_entries()
+	mut st := new_app_state(entries)
+	st.show_detail = true
+	st.cursor_idx = 0
+
+	view := render_view(mut st, 80, 24)
+	assert view.contains('命令详情:')
+	assert view.contains('执行命令:')
+	assert view.contains('按 Enter 复制执行命令 · Esc/q 关闭')
+}

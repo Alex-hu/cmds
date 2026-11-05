@@ -1,5 +1,6 @@
 module ui
 
+import internal.clip
 import internal.model
 import term
 
@@ -29,6 +30,7 @@ pub mut:
 	filter_text     string
 	searching       bool
 	show_detail     bool
+	status_msg      string // 底部状态通知，例如复制成功提示
 }
 
 // new_app_state 初始化交互状态。
@@ -535,13 +537,36 @@ pub fn run(entries []model.Entry) ! {
 		action := read_key()
 
 		if state.show_detail {
-			// 处于详情弹窗时，按任意键或 Enter/Esc/q 关闭
+			// 处于详情弹窗时，按 Enter 复制执行命令到剪贴板并关闭；按 Esc/q 直接关闭
 			match action.typ {
-				.enter, .escape, .quit {
+				.enter {
+					if state.visible_entries.len > 0 && state.cursor_idx < state.visible_entries.len {
+						cur_entry := state.visible_entries[state.cursor_idx]
+						cmd_to_copy := model.execution_command(cur_entry)
+						if clip.copy(cmd_to_copy) {
+							state.status_msg = '✓ 已复制: ${cmd_to_copy}'
+						} else {
+							state.status_msg = '✗ 复制失败: ${cmd_to_copy}'
+						}
+					}
+					state.show_detail = false
+				}
+				.escape, .quit {
 					state.show_detail = false
 				}
 				.char {
 					if action.ch in [`q`, `Q`] {
+						state.show_detail = false
+					} else if action.ch in [`y`, `Y`, `c`, `C`] {
+						if state.visible_entries.len > 0 && state.cursor_idx < state.visible_entries.len {
+							cur_entry := state.visible_entries[state.cursor_idx]
+							cmd_to_copy := model.execution_command(cur_entry)
+							if clip.copy(cmd_to_copy) {
+								state.status_msg = '✓ 已复制: ${cmd_to_copy}'
+							} else {
+								state.status_msg = '✗ 复制失败: ${cmd_to_copy}'
+							}
+						}
 						state.show_detail = false
 					}
 				}
@@ -551,6 +576,9 @@ pub fn run(entries []model.Entry) ! {
 		}
 
 		if state.searching {
+			if state.status_msg.len > 0 {
+				state.status_msg = ''
+			}
 			// 搜索输入状态
 			match action.typ {
 				.enter, .escape {
@@ -575,6 +603,9 @@ pub fn run(entries []model.Entry) ! {
 		}
 
 		// 正常浏览模式
+		if state.status_msg.len > 0 {
+			state.status_msg = ''
+		}
 		match action.typ {
 			.quit {
 				break
